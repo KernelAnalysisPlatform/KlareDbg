@@ -1,0 +1,16 @@
+pip
+six
+html
+flask-socketio
+pillow
+pyelftools
+socketIO-client
+gevent
+pydot
+ipaddr
+capstone
+hexdump
+nose
+./qiradb
+https://pypi.python.org/packages/source/p/pyparsing/pyparsing-1.5.7.tar.gz#md5=9be0fcdcc595199c646ab317c1d9a709
+
