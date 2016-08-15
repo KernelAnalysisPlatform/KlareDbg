@@ -87,8 +87,8 @@ echo "making symlink"
 sudo ln -sf $(pwd)/qira /usr/local/bin/qira
 
 echo "***************************************"
-echo "  Thanks for installing QIRA"
+echo "  Thanks for installing KlareDbg"
 echo "  Check out README for more info"
-echo "  Or just dive in with 'qira /bin/ls'"
+echo "  Or just dive in with 'kldbg /path/to/image'"
 echo "  And point Chrome to localhost:3002"
-echo "    ~geohot"
+echo "    ~rkx1209"

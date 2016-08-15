@@ -15,26 +15,26 @@ import qira_webserver
 
 if __name__ == '__main__':
   # define arguments
-  parser = argparse.ArgumentParser(description = 'Analyze binary. Like "qira /bin/ls /"')
+  parser = argparse.ArgumentParser(description = 'Analyze guest os. Like "kldbg ./foo.qcow2 \"')
   parser.add_argument('-s', "--server", help="bind on port 4000. like socat", action="store_true")
-  parser.add_argument('-t', "--tracelibraries", help="trace into all libraries", action="store_true")
-  parser.add_argument('binary', help="path to the binary")
-  parser.add_argument('args', nargs='*', help="arguments to the binary")
+  #parser.add_argument('-t', "--tracelibraries", help="trace into all libraries", action="store_true")
+  parser.add_argument('image', help="path to the image file")
+  #parser.add_argument('args', nargs='*', help="arguments to the binary")
   parser.add_argument("--gate-trace", metavar="ADDRESS", help="don't start tracing until this address is hit")
   parser.add_argument("--flush-cache", help="flush all QIRA caches", action="store_true")
-  parser.add_argument("--pin", help="use pin as the backend, requires ./pin_build.sh", action="store_true")
+  #parser.add_argument("--pin", help="use pin as the backend, requires ./pin_build.sh", action="store_true")
   parser.add_argument("--host", metavar="HOST", help="listen address for web interface and socat. "+qira_config.HOST+" by default", default=qira_config.HOST)
   parser.add_argument("--web-port", metavar="PORT", help="listen port for web interface. 3002 by default", type=int, default=qira_config.WEB_PORT)
   parser.add_argument("--socat-port", metavar="PORT", help="listen port for socat. 4000 by default", type=int, default=qira_config.SOCAT_PORT)
-  parser.add_argument('-S', '--static', help="enable static2", action="store_true")
-  parser.add_argument("--engine", help="static engine to use with static2 (builtin or r2)", default="builtin")
+  #parser.add_argument('-S', '--static', help="enable static2", action="store_true")
+  #parser.add_argument("--engine", help="static engine to use with static2 (builtin or r2)", default="builtin")
   #capstone flag in qira_config for now
 
   # parse arguments, first try
   args, unknown = parser.parse_known_args()
 
   # hack to allow arguments to be passed to the analyzed program
-  sys.argv.insert(sys.argv.index(args.binary), "--")
+  sys.argv.insert(sys.argv.index(args.image), "--")
 
   # parse args, second try
   args = parser.parse_args()
@@ -48,13 +48,6 @@ if __name__ == '__main__':
     args.host = ipaddr.IPAddress(args.host).exploded
   except ValueError:
     raise Exception("--web-host must be a valid IPv4/IPv6 address")
-
-  # handle arguments
-  if sys.platform == "darwin":
-    print "*** running on darwin, defaulting to --pin"
-    qira_config.USE_PIN = True
-  else:
-    qira_config.USE_PIN = args.pin
 
 
   qira_config.HOST = args.host
@@ -80,7 +73,7 @@ if __name__ == '__main__':
     qemu_args.append(args.gate_trace)
 
   # creates the file symlink, program is constant through server run
-  program = qira_program.Program(args.binary, args.args, qemu_args)
+  program = qira_program.Program(args.image, args.args, qemu_args)
 
   is_qira_running = 1
   try:
@@ -92,7 +85,7 @@ if __name__ == '__main__':
     print "no qira server found, starting it"
     program.clear()
 
-  # start the binary runner
+  # start the image runner
   if args.server:
     qira_socat.start_bindserver(program, qira_config.SOCAT_PORT, -1, 1, True)
   else:
@@ -102,4 +95,3 @@ if __name__ == '__main__':
   if not is_qira_running:
     # start the http server
     qira_webserver.run_server(args, program)
-

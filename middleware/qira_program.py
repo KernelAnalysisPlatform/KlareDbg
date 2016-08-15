@@ -28,14 +28,14 @@ def which(prog):
     p = subprocess.Popen(cmd, stdout=subprocess.PIPE)
     res = p.stdout.readlines()
     if len(res) == 0:
-      raise Exception("binary not found")
+      raise Exception("image not found")
     return os.path.realpath(res[0].strip())
   except:
-    # fallback mode, look for the binary straight up
+    # fallback mode, look for the image straight up
     if os.path.isfile(prog):
       return os.path.realpath(prog)
     else:
-      raise Exception("binary not found")
+      raise Exception("image not found")
 
 # things that don't cross the fork
 class Program:
@@ -49,240 +49,34 @@ class Program:
     # call which to match the behavior of strace and gdb
     self.program = which(prog)
     self.args = args
-    self.proghash = sha1(open(self.program, "rb").read()).hexdigest()
-    print "*** program is",self.program,"with hash",self.proghash
+    #self.proghash = sha1(open(self.program, "rb").read()).hexdigest()
+    print "*** image file is",self.program
 
     # this is always initted, as it's the tag repo
-    self.static = static2.Static(self.program)
-
-    # init static
-    if qira_config.WITH_STATIC:
-      threading.Thread(target=self.static.process).start()
+    #self.static = static2.Static(self.program)
 
     # no traces yet
     self.traces = {}
     self.runnable = False
 
     # bring this back
-    if self.program != "/tmp/qira_binary":
+    if self.program != "/tmp/qira_image":
       try:
-        os.unlink("/tmp/qira_binary")
+        os.unlink("/tmp/qira_image")
       except:
         pass
       try:
-        os.symlink(os.path.realpath(self.program), "/tmp/qira_binary")
+        os.symlink(os.path.realpath(self.program), "/tmp/qira_image")
       except:
         pass
+    self.identify_guest_image()
 
-    # defaultargs for qira binary
-    self.defaultargs = ["-strace", "-D", "/dev/null", "-d", "in_asm", "-singlestep"]+qemu_args
-    if qira_config.TRACE_LIBRARIES:
-      self.defaultargs.append("-tracelibraries")
-
-    self.identify_program()
-
-  def identify_program(self):
+  def identify_guest_image(self):
     qemu_dir = os.path.dirname(os.path.realpath(__file__))+"/../tracers/qemu/"
-    pin_dir = os.path.dirname(os.path.realpath(__file__))+"/../tracers/pin/"
-    lib_dir = os.path.dirname(os.path.realpath(__file__))+"/../libs/"
-    self.pinbinary = pin_dir+"pin-latest/pin"
-
-    # pmaps is global, but updated by the traces
-    progdat = open(self.program, "rb").read(0x800)
-
-    CPU_TYPE_ARM = "\x0C"
-    CPU_TYPE_ARM64 = "\x01\x00\x00\x0C"
-
-    CPU_SUBTYPE_ARM_ALL = "\x00"
-    CPU_SUBTYPE_ARM_V4T = "\x05"
-    CPU_SUBTYPE_ARM_V6 = "\x06"
-    CPU_SUBTYPE_ARM_V5TEJ = "\x07"
-    CPU_SUBTYPE_ARM_XSCALE = "\x08"
-    CPU_SUBTYPE_ARM_V7 = "\x09"
-    CPU_SUBTYPE_ARM_V7F = "\x0A"
-    CPU_SUBTYPE_ARM_V7S = "\x0B"
-    CPU_SUBTYPE_ARM_V7K = "\x0C"
-    CPU_SUBTYPE_ARM_V6M = "\x0E"
-    CPU_SUBTYPE_ARM_V7M = "\x0F"
-    CPU_SUBTYPE_ARM_V7EM = "\x10"
-
-    CPU_SUBTYPE_ARM = [
-                         CPU_SUBTYPE_ARM_V4T,
-                         CPU_SUBTYPE_ARM_V6,
-                         CPU_SUBTYPE_ARM_V5TEJ,
-                         CPU_SUBTYPE_ARM_XSCALE,
-                         CPU_SUBTYPE_ARM_V7,
-                         CPU_SUBTYPE_ARM_V7F,
-                         CPU_SUBTYPE_ARM_V7K,
-                         CPU_SUBTYPE_ARM_V6M,
-                         CPU_SUBTYPE_ARM_V7M,
-                         CPU_SUBTYPE_ARM_V7EM
-                      ]
-
-    CPU_SUBTYPE_ARM64 = [
-                         CPU_SUBTYPE_ARM_ALL,
-                         CPU_SUBTYPE_ARM_V7S
-                        ]
-
-    MACHO_MAGIC = "\xFE\xED\xFA\xCE"
-    MACHO_CIGAM = "\xCE\xFA\xED\xFE"
-    MACHO_MAGIC_64 = "\xFE\xED\xFA\xCF"
-    MACHO_CIGAM_64 = "\xCF\xFA\xED\xFE"
-    MACHO_FAT_MAGIC = "\xCA\xFE\xBA\xBE"
-    MACHO_FAT_CIGAM = "\xBE\xBA\xFE\xCA"
-    MACHO_P200_FAT_MAGIC = "\xCA\xFE\xD0\x0D"
-    MACHO_P200_FAT_CIGAM = "\x0D\xD0\xFE\xCA"
-
-    # Linux binaries
-    if progdat[0:4] == "\x7FELF":
-      # get file type
-      self.fb = struct.unpack("H", progdat[0x12:0x14])[0]   # e_machine
-
-      def use_lib(arch):
-        maybe_path = lib_dir+arch+"/"
-        if 'QEMU_LD_PREFIX' not in os.environ and os.path.exists(maybe_path):
-          os.environ['QEMU_LD_PREFIX'] = os.path.realpath(maybe_path)
-          print "**** set QEMU_LD_PREFIX to",os.environ['QEMU_LD_PREFIX']
-
-      if self.fb == 0x28:
-        if '/lib/ld-linux.so.3' in progdat:
-          use_lib('armel')
-        elif '/lib/ld-linux-armhf.so.3' in progdat:
-          use_lib('armhf')
-        self.tregs = arch.ARMREGS
-        self.qirabinary = qemu_dir + "qira-arm"
-      elif self.fb == 0xb7:
-        use_lib('arm64')
-        self.tregs = arch.AARCH64REGS
-        self.qirabinary = qemu_dir + "qira-aarch64"
-      elif self.fb == 0x3e:
-        self.tregs = arch.X64REGS
-        self.qirabinary = qemu_dir + "qira-x86_64"
-        self.pintool = pin_dir + "obj-intel64/qirapin.so"
-      elif self.fb == 0x03:
-        use_lib('i386')
-        self.tregs = arch.X86REGS
-        self.qirabinary = qemu_dir + "qira-i386"
-        self.pintool = pin_dir + "obj-ia32/qirapin.so"
-      elif self.fb == 0x800:
-        use_lib('mips')
-        arch.MIPSREGS[2:-1] = (True, "mips")
-        self.tregs = arch.MIPSREGS
-        self.qirabinary = qemu_dir + 'qira-mips'
-      elif self.fb == 0x08:
-        use_lib('mipsel')
-        arch.MIPSREGS[2:-1] = (False, "mipsel")
-        self.tregs = arch.MIPSREGS
-        self.qirabinary = qemu_dir + 'qira-mipsel'
-      elif self.fb == 0x1400:   # big endian...
-        use_lib('powerpc')
-        self.tregs = arch.PPCREGS
-        self.qirabinary = qemu_dir + "qira-ppc"
-      else:
-        raise Exception("binary type "+hex(self.fb)+" not supported")
-
-      self.qirabinary = os.path.realpath(self.qirabinary)
-      print "**** using",self.qirabinary,"for",hex(self.fb)
-
-      self.runnable = True
-
-    # Windows binaries
-    elif progdat[0:2] == "MZ":
-      print "**** windows binary detected, only running the server"
-      pe = struct.unpack("I", progdat[0x3c:0x40])[0]
-      wh = struct.unpack("H", progdat[pe+4:pe+6])[0]
-      if wh == 0x14c:
-        print "*** 32-bit windows"
-        self.tregs = arch.X86REGS
-        self.fb = 0x03
-      elif wh == 0x8664:
-        print "*** 64-bit windows"
-        self.tregs = arch.X64REGS
-        self.fb = 0x3e
-      else:
-        raise Exception("windows binary with machine "+hex(wh)+" not supported")
-
-    # MACHO FAT binaries
-    elif progdat[0x0:0x04] in (MACHO_FAT_MAGIC, MACHO_FAT_CIGAM, MACHO_P200_FAT_MAGIC, MACHO_P200_FAT_CIGAM):
-      print "**** Mach-O FAT (Universal) binary detected"
-
-      if progdat[0x04:0x05] == CPU_TYPE_ARM and progdat[0x08:0x09] in CPU_SUBTYPE_ARM:
-        print "**** Mach-O ARM architecture detected"
-        self.macharch = "arm"
-      elif (progdat[0x08:0x0c] == CPU_TYPE_ARM64) or (progdat[0x1c:0x20] == CPU_TYPE_ARM64) or (progdat[0x30:0x34] == CPU_TYPE_ARM64):
-        print "**** Mach-O Aarch64 architecture detected"
-        self.macharch = "aarch64"
-      else:
-        self.macharch = ""
-        print "**** Mach-O X86/64 architecture detected"
-
-      if progdat[0x0:0x04] in (MACHO_P200_FAT_MAGIC, MACHO_P200_FAT_CIGAM):
-        raise NotImplementedError("Pack200 compressed files are not supported yet")
-      elif progdat[0x0:0x04] in (MACHO_FAT_MAGIC, MACHO_FAT_CIGAM):
-        if progdat[0x0:0x04] == MACHO_FAT_CIGAM:
-          arch.ARMREGS[2] = True
-          arch.AARCH64REGS[2] = True
-        if self.macharch == "arm":
-          self.tregs = arch.ARMREGS
-          self.pintool = ""
-        elif self.macharch == "aarch64":
-          self.tregs = arch.AARCH64REGS
-          self.pintool = ""
-        else:
-          self.tregs = arch.X86REGS
-          self.pintool = pin_dir + "obj-ia32/qirapin.dylib"
-      else:
-        raise Exception("Mach-O FAT (Universal) binary not supported")
-      if self.macharch == "arm" or self.macharch == "aarch64":
-        raise NotImplementedError("ARM/Aarch64 Support is not implemented")
-      if not os.path.isfile(self.pintool):
-        print "Running a Mach-O FAT (Universal) binary requires PIN support. See tracers/pin_build.sh"
-        exit()
-      raise NotImplementedError("Mach-O FAT (Universal) binary not supported")
-      self.runnable = True
-
-    # MACHO binaries
-    elif progdat[0x0:0x04] in (MACHO_MAGIC_64, MACHO_CIGAM_64, MACHO_MAGIC, MACHO_CIGAM):
-      print "**** Mach-O binary detected"
-
-      if progdat[0x04:0x05] == CPU_TYPE_ARM and progdat[0x08:0x09] in CPU_SUBTYPE_ARM:
-        print "**** Mach-O ARM architecture detected"
-        self.macharch = "arm"
-      elif progdat[0x04:0x05] == CPU_TYPE_ARM and progdat[0x08:0x09] in CPU_SUBTYPE_ARM64:
-        print "**** Mach-O Aarch64 architecture detected"
-        self.macharch = "aarch64"
-      else:
-        self.macharch = ""
-        print "**** Mach-O X86/64 architecture detected"
-
-      if progdat[0x0:0x04] in (MACHO_MAGIC_64, MACHO_CIGAM_64):
-        if progdat[0x0:0x04] == MACHO_CIGAM_64:
-          arch.AARCH64REGS[2] = True
-        if self.macharch == "aarch64":
-          self.tregs = arch.AARCH64REGS
-          self.pintool = ""
-        else:
-          self.tregs = arch.X64REGS
-          self.pintool = pin_dir + "obj-intel64/qirapin.dylib"
-      elif progdat[0x0:0x04] in (MACHO_MAGIC, MACHO_CIGAM):
-        if progdat[0x0:0x04] == MACHO_CIGAM:
-          arch.ARMREGS[2] = True
-        if self.macharch == "arm":
-          self.tregs = arch.ARMREGS
-          self.pintool = ""
-        else:
-          self.tregs = arch.X86REGS
-          self.pintool = pin_dir + "obj-ia32/qirapin.dylib"
-      else:
-        raise Exception("Mach-O binary not supported")
-      if self.macharch == "arm" or self.macharch == "aarch64":
-        raise NotImplementedError("ARM/Aarch64 Support is not implemented")
-      if not os.path.isfile(self.pintool):
-        print "Running a Mach-O binary requires PIN support. See tracers/pin_build.sh"
-        exit()
-      self.runnable = True
-    else:
-      raise Exception("unknown binary type")
+    self.tregs = arch.X64REGS
+    self.qirabinary = qemu_dir + "qira-x86_64"
+    self.qirabinary = os.path.realpath(self.qirabinary)
+    print "**** using",self.qirabinary
 
   def clear(self):
     # probably always good to do except in development of middleware
@@ -384,12 +178,8 @@ class Program:
     if shouldfork:
       if os.fork() != 0:
         return
-    if qira_config.USE_PIN:
-      # is "-injection child" good?
-      eargs = [self.pinbinary, "-injection", "child", "-t", self.pintool, "--", self.program]+self.args
-    else:
-      eargs = [self.qirabinary]+self.defaultargs+args+[self.program]+self.args
-    #print "***",' '.join(eargs)
+    eargs = [self.qirabinary]+self.defaultargs+args+[self.program]+self.args
+    print "***",' '.join(eargs)
     os.execvp(eargs[0], eargs)
 
 

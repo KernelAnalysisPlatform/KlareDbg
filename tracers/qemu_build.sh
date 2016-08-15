@@ -38,19 +38,19 @@ if [ ! -d qemu/qemu-latest ]; then
   tar xf qemu-$QEMU_VERSION.tar.bz2
   ln -s qemu-$QEMU_VERSION qemu-latest
 
-  ln -s qemu-latest/arm-linux-user/qemu-arm qira-arm
-  ln -s qemu-latest/i386-linux-user/qemu-i386 qira-i386
-  ln -s qemu-latest/x86_64-linux-user/qemu-x86_64 qira-x86_64
-  ln -s qemu-latest/ppc-linux-user/qemu-ppc qira-ppc
-  ln -s qemu-latest/aarch64-linux-user/qemu-aarch64 qira-aarch64
-  ln -s qemu-latest/mips-linux-user/qemu-mips qira-mips
-  ln -s qemu-latest/mipsel-linux-user/qemu-mipsel qira-mipsel
+  # ln -s qemu-latest/arm-linux-user/qemu-arm qira-arm
+  # ln -s qemu-latest/i386-linux-user/qemu-i386 qira-i386
+  ln -s qemu-latest/x86_64-softmmu/qemu-system-x86_64 qira-x86_64
+  # ln -s qemu-latest/ppc-linux-user/qemu-ppc qira-ppc
+  # ln -s qemu-latest/aarch64-linux-user/qemu-aarch64 qira-aarch64
+  # ln -s qemu-latest/mips-linux-user/qemu-mips qira-mips
+  # ln -s qemu-latest/mipsel-linux-user/qemu-mipsel qira-mipsel
 
   cd qemu-latest
-  patch -p1 < ../../qemu.patch
+  #patch -p1 < ../../qemu.patch
   cd ../..
 fi
 
 cd qemu/qemu-latest
-./configure --target-list=i386-linux-user,x86_64-linux-user,arm-linux-user,ppc-linux-user,aarch64-linux-user,mips-linux-user,mipsel-linux-user --enable-tcg-interpreter --enable-debug-tcg --cpu=unknown --enable-tcg-interpreter --enable-debug-tcg --cpu=unknown --python="$python"
+./configure --target-list=x86_64-softmmu --enable-tcg-interpreter --enable-debug-tcg --cpu=unknown --enable-tcg-interpreter --enable-debug-tcg --cpu=unknown --python="$python"
 make -j $(grep processor < /proc/cpuinfo | wc -l)
