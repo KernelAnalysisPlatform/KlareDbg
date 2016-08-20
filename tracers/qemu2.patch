@@ -1,0 +1,5308 @@
+--- ./qemu-2.5.1/disas.c	2016-03-30 06:01:14.000000000 +0900
++++ ./qemu-2.5.1-patched/disas.c	2016-08-18 02:32:07.292017090 +0900
+@@ -172,6 +172,7 @@ static int print_insn_od_target(bfd_vma
+     return print_insn_objdump(pc, info, "OBJD-T");
+ }
+ 
++
+ /* Disassemble this for me please... (debugging). 'flags' has the following
+    values:
+     i386 - 1 means 16 bit code, 2 means 64 bit code
+@@ -179,7 +180,7 @@ static int print_insn_od_target(bfd_vma
+            bit 16 indicates little endian.
+     other targets - unused
+  */
+-void target_disas(FILE *out, CPUState *cpu, target_ulong code,
++void real_target_disas(FILE *out, CPUState *cpu, target_ulong code,
+                   target_ulong size, int flags)
+ {
+     CPUClass *cc = CPU_GET_CLASS(cpu);
+@@ -228,7 +229,7 @@ void target_disas(FILE *out, CPUState *c
+         s.info.mach = bfd_mach_ppc;
+ #endif
+     }
+-    s.info.disassembler_options = (char *)"any";
++    s.info.disassembler_options = (char *)"intel";
+     s.info.print_insn = print_insn_ppc;
+ #endif
+     if (s.info.print_insn == NULL) {
+@@ -236,6 +237,10 @@ void target_disas(FILE *out, CPUState *c
+     }
+ 
+     for (pc = code; size > 0; pc += count, size -= count) {
++    #ifdef TARGET_ARM
++    if (flags & 1) fprintf(out, "t");
++    else fprintf(out, "n");
++    #endif
+ 	fprintf(out, "0x" TARGET_FMT_lx ":  ", pc);
+ 	count = s.info.print_insn(pc, &s.info);
+ #if 0
+--- ./qemu-2.5.1/include/librarymap.h	1970-01-01 09:00:00.000000000 +0900
++++ ./qemu-2.5.1-patched/include/librarymap.h	2016-08-18 15:46:00.665278284 +0900
+@@ -0,0 +1,38 @@
++struct librarymap {
++  struct librarymap *next;
++  ram_addr_t begin;
++  ram_addr_t end;
++  const char *name;
++};
++
++struct librarymap *GLOBAL_librarymap;
++
++void init_librarymap(void);
++void add_to_librarymap(const char *name, ram_addr_t begin, ram_addr_t end);
++bool is_library_addr(ram_addr_t addr);
++
++void init_librarymap(void){
++  GLOBAL_librarymap = malloc(sizeof(struct librarymap));
++  memset(GLOBAL_librarymap, 0, sizeof(struct librarymap));
++  GLOBAL_librarymap->name = "dummy";
++}
++
++void add_to_librarymap(const char *name, ram_addr_t begin, ram_addr_t end){
++  struct librarymap *cur, *newmap;
++  for(cur = GLOBAL_librarymap; cur->next != NULL; cur = cur->next);
++  newmap = malloc(sizeof(struct librarymap));
++  newmap->next = NULL;
++  newmap->begin = begin;
++  newmap->end = end;
++  newmap->name = strdup(name);
++  cur->next = newmap;
++}
++
++bool is_library_addr(ram_addr_t addr){
++  struct librarymap *cur = GLOBAL_librarymap;
++  while(cur != NULL){
++    if (addr >= cur->begin && addr <= cur->end) return true;
++    cur = cur->next;
++  }
++  return false;
++}
+--- ./qemu-2.5.1/include/vmi.h	1970-01-01 09:00:00.000000000 +0900
++++ ./qemu-2.5.1-patched/include/vmi.h	2016-08-20 14:51:27.370899524 +0900
+@@ -0,0 +1,9 @@
++#ifndef __VMI_H__
++#define __VMI_H__
++
++extern target_ulong mod_addr;
++extern int64_t mod_size;
++extern target_ulong now_pc;
++
++#define in_mod(x) (mod_addr <= x && x < mod_addr + mod_size)
++#endif
+--- ./qemu-2.5.1/include/tcg_tracer.h	1970-01-01 09:00:00.000000000 +0900
++++ ./qemu-2.5.1-patched/include/tcg_tracer.h	2016-08-18 22:05:46.415222537 +0900
+@@ -0,0 +1,175 @@
++/*
++ * Tiny Code Generator for QEMU
++ *
++ * Copyright (c) 2009, 2011 Stefan Weil
++ *
++ * Permission is hereby granted, free of charge, to any person obtaining a copy
++ * of this software and associated documentation files (the "Software"), to deal
++ * in the Software without restriction, including without limitation the rights
++ * to use, copy, modify, merge, publish, distribute, sublicense, and/or sell
++ * copies of the Software, and to permit persons to whom the Software is
++ * furnished to do so, subject to the following conditions:
++ *
++ * The above copyright notice and this permission notice shall be included in
++ * all copies or substantial portions of the Software.
++ *
++ * THE SOFTWARE IS PROVIDED "AS IS", WITHOUT WARRANTY OF ANY KIND, EXPRESS OR
++ * IMPLIED, INCLUDING BUT NOT LIMITED TO THE WARRANTIES OF MERCHANTABILITY,
++ * FITNESS FOR A PARTICULAR PURPOSE AND NONINFRINGEMENT. IN NO EVENT SHALL
++ * THE AUTHORS OR COPYRIGHT HOLDERS BE LIABLE FOR ANY CLAIM, DAMAGES OR OTHER
++ * LIABILITY, WHETHER IN AN ACTION OF CONTRACT, TORT OR OTHERWISE, ARISING FROM,
++ * OUT OF OR IN CONNECTION WITH THE SOFTWARE OR THE USE OR OTHER DEALINGS IN
++ * THE SOFTWARE.
++ */
++
++/*
++ * This code implements a TCG which does not generate machine code for some
++ * real target machine but which generates virtual machine code for an
++ * interpreter. Interpreted pseudo code is slow, but it works on any host.
++ *
++ * Some remarks might help in understanding the code:
++ *
++ * "target" or "TCG target" is the machine which runs the generated code.
++ * This is different to the usual meaning in QEMU where "target" is the
++ * emulated machine. So normally QEMU host is identical to TCG target.
++ * Here the TCG target is a virtual machine, but this virtual machine must
++ * use the same word size like the real machine.
++ * Therefore, we need both 32 and 64 bit virtual machines (interpreter).
++ */
++
++#if !defined(TCG_TARGET_H)
++#define TCG_TARGET_H
++
++#include "config-host.h"
++
++#define T_TCG_TARGET_INTERPRETER 1
++#define T_TCG_TARGET_INSN_UNIT_SIZE 1
++#define T_TCG_TARGET_TLB_DISPLACEMENT_BITS 32
++
++#if UINTPTR_MAX == UINT32_MAX
++# define T_TCG_TARGET_REG_BITS 32
++#elif UINTPTR_MAX == UINT64_MAX
++# define T_TCG_TARGET_REG_BITS 64
++#else
++# error Unknown pointer size for tci target
++#endif
++
++#ifdef CONFIG_DEBUG_TCG
++/* Enable debug output. */
++#define CONFIG_DEBUG_TCG_INTERPRETER
++#endif
++
++/* Optional instructions. */
++
++#define T_TCG_TARGET_HAS_bswap16_i32      1
++#define T_TCG_TARGET_HAS_bswap32_i32      1
++#define T_TCG_TARGET_HAS_div_i32          1
++#define T_TCG_TARGET_HAS_rem_i32          1
++#define T_TCG_TARGET_HAS_ext8s_i32        1
++#define T_TCG_TARGET_HAS_ext16s_i32       1
++#define T_TCG_TARGET_HAS_ext8u_i32        1
++#define T_TCG_TARGET_HAS_ext16u_i32       1
++#define T_TCG_TARGET_HAS_andc_i32         0
++#define T_TCG_TARGET_HAS_deposit_i32      1
++#define T_TCG_TARGET_HAS_eqv_i32          0
++#define T_TCG_TARGET_HAS_nand_i32         0
++#define T_TCG_TARGET_HAS_nor_i32          0
++#define T_TCG_TARGET_HAS_neg_i32          1
++#define T_TCG_TARGET_HAS_not_i32          1
++#define T_TCG_TARGET_HAS_orc_i32          0
++#define T_TCG_TARGET_HAS_rot_i32          1
++#define T_TCG_TARGET_HAS_movcond_i32      0
++#define T_TCG_TARGET_HAS_muls2_i32        0
++#define T_TCG_TARGET_HAS_muluh_i32        0
++#define T_TCG_TARGET_HAS_mulsh_i32        0
++
++#if T_TCG_TARGET_REG_BITS == 64
++#define T_TCG_TARGET_HAS_extrl_i64_i32    0
++#define T_TCG_TARGET_HAS_extrh_i64_i32    0
++#define T_TCG_TARGET_HAS_bswap16_i64      1
++#define T_TCG_TARGET_HAS_bswap32_i64      1
++#define T_TCG_TARGET_HAS_bswap64_i64      1
++#define T_TCG_TARGET_HAS_deposit_i64      1
++#define T_TCG_TARGET_HAS_div_i64          0
++#define T_TCG_TARGET_HAS_rem_i64          0
++#define T_TCG_TARGET_HAS_ext8s_i64        1
++#define T_TCG_TARGET_HAS_ext16s_i64       1
++#define T_TCG_TARGET_HAS_ext32s_i64       1
++#define T_TCG_TARGET_HAS_ext8u_i64        1
++#define T_TCG_TARGET_HAS_ext16u_i64       1
++#define T_TCG_TARGET_HAS_ext32u_i64       1
++#define T_TCG_TARGET_HAS_andc_i64         0
++#define T_TCG_TARGET_HAS_eqv_i64          0
++#define T_TCG_TARGET_HAS_nand_i64         0
++#define T_TCG_TARGET_HAS_nor_i64          0
++#define T_TCG_TARGET_HAS_neg_i64          1
++#define T_TCG_TARGET_HAS_not_i64          1
++#define T_TCG_TARGET_HAS_orc_i64          0
++#define T_TCG_TARGET_HAS_rot_i64          1
++#define T_TCG_TARGET_HAS_movcond_i64      0
++#define T_TCG_TARGET_HAS_muls2_i64        0
++#define T_TCG_TARGET_HAS_add2_i32         0
++#define T_TCG_TARGET_HAS_sub2_i32         0
++#define T_TCG_TARGET_HAS_mulu2_i32        0
++#define T_TCG_TARGET_HAS_add2_i64         0
++#define T_TCG_TARGET_HAS_sub2_i64         0
++#define T_TCG_TARGET_HAS_mulu2_i64        0
++#define T_TCG_TARGET_HAS_muluh_i64        0
++#define T_TCG_TARGET_HAS_mulsh_i64        0
++#else
++#define T_TCG_TARGET_HAS_mulu2_i32        1
++#endif /* T_TCG_TARGET_REG_BITS == 64 */
++#define T_TCG_TARGET_NB_REGS 16
++
++/* List of registers which are used by TCG. */
++typedef enum {
++    T_TCG_REG_R0 = 0,
++    T_TCG_REG_R1,
++    T_TCG_REG_R2,
++    T_TCG_REG_R3,
++    T_TCG_REG_R4,
++    T_TCG_REG_R5,
++    T_TCG_REG_R6,
++    T_TCG_REG_R7,
++#if TCG_TARGET_NB_REGS >= 16
++    T_TCG_REG_R8,
++    T_TCG_REG_R9,
++    T_TCG_REG_R10,
++    T_TCG_REG_R11,
++    T_TCG_REG_R12,
++    T_TCG_REG_R13,
++    T_TCG_REG_R14,
++    T_TCG_REG_R15,
++#if TCG_TARGET_NB_REGS >= 32
++    T_TCG_REG_R16,
++    T_TCG_REG_R17,
++    T_TCG_REG_R18,
++    T_TCG_REG_R19,
++    T_TCG_REG_R20,
++    T_TCG_REG_R21,
++    T_TCG_REG_R22,
++    T_TCG_REG_R23,
++    T_TCG_REG_R24,
++    T_TCG_REG_R25,
++    T_TCG_REG_R26,
++    T_TCG_REG_R27,
++    T_TCG_REG_R28,
++    T_TCG_REG_R29,
++    T_TCG_REG_R30,
++    T_TCG_REG_R31,
++#endif
++#endif
++    /* Special value UINT8_MAX is used by TCI to encode constant values. */
++    T_TCG_CONST = UINT8_MAX
++} T_TCGReg;
++
++#define T_TCG_AREG0                       (T_TCG_TARGET_NB_REGS - 2)
++
++/* Used for function call generation. */
++#define T_TCG_REG_CALL_STACK              (T_TCG_TARGET_NB_REGS - 1)
++#define T_TCG_TARGET_CALL_STACK_OFFSET    0
++#define T_TCG_TARGET_STACK_ALIGN          16
++
++void tci_disas(uint8_t opc);
++
++#endif /* TCG_TARGET_H */
+--- ./qemu-2.5.1/tci.c	2016-03-30 06:01:20.000000000 +0900
++++ ./qemu-2.5.1-patched/tci.c	2016-08-20 00:05:04.782189884 +0900
+@@ -28,6 +28,7 @@
+ #include "exec/exec-all.h"           /* MAX_OPC_PARAM_IARGS */
+ #include "exec/cpu_ldst.h"
+ #include "tcg-op.h"
++#include "librarymap.h"
+ 
+ /* Marker for missing code. */
+ #define TODO() \
+@@ -413,6 +414,269 @@ static bool tci_compare64(uint64_t u0, u
+     return result;
+ }
+ 
++// if it's not softmmu, assume it's user
++#ifndef CONFIG_SOFTMMU
++#define QEMU_USER
++#endif
++
++#define QIRA_TRACKING
++
++#ifdef QIRA_TRACKING
++
++#include <fcntl.h>
++#include <sys/mman.h>
++#include <sys/file.h>
++
++#ifdef QEMU_USER
++#include "qemu.h"
++#endif
++
++#define QIRA_DEBUG(...) {}
++//#define QIRA_DEBUG qemu_debug
++//#define QIRA_DEBUG printf
++
++// struct storing change data
++struct change {
++  uint64_t address;
++  uint64_t data;
++  uint32_t changelist_number;
++  uint32_t flags;
++};
++
++// prototypes
++void init_QIRA(CPUArchState *env, int id);
++struct change *add_change(target_ulong addr, uint64_t data, uint32_t flags);
++void track_load(target_ulong a, uint64_t data, int size);
++void track_store(target_ulong a, uint64_t data, int size);
++void track_read(target_ulong base, target_ulong offset, target_ulong data, int size);
++void track_write(target_ulong base, target_ulong offset, target_ulong data, int size);
++void add_pending_change(target_ulong addr, uint64_t data, uint32_t flags);
++void commit_pending_changes(void);
++void resize_change_buffer(size_t size);
++
++// defined in qemu.h
++//void track_kernel_read(void *host_addr, target_ulong guest_addr, long len);
++//void track_kernel_write(void *host_addr, target_ulong guest_addr, long len);
++
++#define IS_VALID      0x80000000
++#define IS_WRITE      0x40000000
++#define IS_MEM        0x20000000
++#define IS_START      0x10000000
++#define IS_SYSCALL    0x08000000
++#define SIZE_MASK 0xFF
++
++#define FAKE_SYSCALL_LOADSEG 0x10001
++
++int GLOBAL_QIRA_did_init = 0;
++CPUArchState *GLOBAL_CPUArchState;
++struct change *GLOBAL_change_buffer;
++
++uint32_t GLOBAL_qira_log_fd;
++size_t GLOBAL_change_size;
++
++// current state that must survive forks
++struct logstate {
++  uint32_t change_count;
++  uint32_t changelist_number;
++  uint32_t is_filtered;
++  uint32_t first_changelist_number;
++  int parent_id;
++  int this_pid;
++};
++struct logstate *GLOBAL_logstate;
++
++// input args
++uint32_t GLOBAL_start_clnum = 1;
++int GLOBAL_parent_id = -1, GLOBAL_id = -1;
++
++int GLOBAL_tracelibraries = 0;
++uint64_t GLOBAL_gatetrace = 0;
++
++#define OPEN_GLOBAL_ASM_FILE { if (unlikely(GLOBAL_asm_file == NULL)) { GLOBAL_asm_file = fopen("/tmp/qira_asm", "a"); } }
++FILE *GLOBAL_asm_file = NULL;
++FILE *GLOBAL_strace_file = NULL;
++
++// should be 0ed on startup
++#define PENDING_CHANGES_MAX_ADDR 0x100
++struct change GLOBAL_pending_changes[PENDING_CHANGES_MAX_ADDR/4];
++
++uint32_t get_current_clnum(void);
++uint32_t get_current_clnum(void) {
++  return GLOBAL_logstate->changelist_number;
++}
++
++void resize_change_buffer(size_t size) {
++  if(ftruncate(GLOBAL_qira_log_fd, size)) {
++    perror("ftruncate");
++  }
++  GLOBAL_change_buffer = mmap(NULL, size,
++         PROT_READ | PROT_WRITE, MAP_SHARED, GLOBAL_qira_log_fd, 0);
++  GLOBAL_logstate = (struct logstate *)GLOBAL_change_buffer;
++  if (GLOBAL_change_buffer == NULL) QIRA_DEBUG("MMAP FAILED!\n");
++}
++
++void init_QIRA(CPUArchState *env, int id) {
++  QIRA_DEBUG("init QIRA called\n");
++  GLOBAL_QIRA_did_init = 1;
++  GLOBAL_CPUArchState = env;   // unused
++
++  OPEN_GLOBAL_ASM_FILE
++
++  char fn[PATH_MAX];
++  sprintf(fn, "/tmp/qira_logs/%d_strace", id);
++  GLOBAL_strace_file = fopen(fn, "w");
++
++  sprintf(fn, "/tmp/qira_logs/%d", id);
++
++  // unlink it first
++  unlink(fn);
++  GLOBAL_qira_log_fd = open(fn, O_RDWR | O_CREAT, 0644);
++  GLOBAL_change_size = 1;
++  memset(GLOBAL_pending_changes, 0, (PENDING_CHANGES_MAX_ADDR/4) * sizeof(struct change));
++
++  resize_change_buffer(GLOBAL_change_size * sizeof(struct change));
++  memset(GLOBAL_change_buffer, 0, sizeof(struct change));
++
++  // skip the first change
++  GLOBAL_logstate->change_count = 1;
++  GLOBAL_logstate->is_filtered = 0;
++  GLOBAL_logstate->this_pid = getpid();
++
++  // do this after init_QIRA
++  GLOBAL_logstate->changelist_number = GLOBAL_start_clnum-1;
++  GLOBAL_logstate->first_changelist_number = GLOBAL_start_clnum;
++  GLOBAL_logstate->parent_id = GLOBAL_parent_id;
++
++  // use all fds up to 30
++  int i;
++  int dupme = open("/dev/null", O_RDONLY);
++  struct stat useless;
++  for (i = 0; i < 30; i++) {
++    sprintf(fn, "/proc/self/fd/%d", i);
++    if (stat(fn, &useless) == -1) {
++      //printf("dup2 %d %d\n", dupme, i);
++      dup2(dupme, i);
++    }
++  }
++
++  if (GLOBAL_librarymap == NULL){
++      init_librarymap();
++  }
++
++  // no more opens can happen here in QEMU, only the target process
++}
++
++struct change *add_change(target_ulong addr, uint64_t data, uint32_t flags) {
++  size_t cc = __sync_fetch_and_add(&GLOBAL_logstate->change_count, 1);
++
++  if (cc == GLOBAL_change_size) {
++    // double the buffer size
++    QIRA_DEBUG("doubling buffer with size %d\n", GLOBAL_change_size);
++    resize_change_buffer(GLOBAL_change_size * sizeof(struct change) * 2);
++    GLOBAL_change_size *= 2;
++  }
++  struct change *this_change = GLOBAL_change_buffer + cc;
++  this_change->address = (uint64_t)addr;
++  this_change->data = data;
++  this_change->changelist_number = GLOBAL_logstate->changelist_number;
++  this_change->flags = IS_VALID | flags;
++  return this_change;
++}
++
++void add_pending_change(target_ulong addr, uint64_t data, uint32_t flags) {
++  if (addr < PENDING_CHANGES_MAX_ADDR) {
++    GLOBAL_pending_changes[addr/4].address = (uint64_t)addr;
++    GLOBAL_pending_changes[addr/4].data = data;
++    GLOBAL_pending_changes[addr/4].flags = IS_VALID | flags;
++  }
++}
++
++void commit_pending_changes(void) {
++  int i;
++  for (i = 0; i < PENDING_CHANGES_MAX_ADDR/4; i++) {
++    struct change *c = &GLOBAL_pending_changes[i];
++    if (c->flags & IS_VALID) add_change(c->address, c->data, c->flags);
++  }
++  memset(GLOBAL_pending_changes, 0, (PENDING_CHANGES_MAX_ADDR/4) * sizeof(struct change));
++}
++
++struct change *track_syscall_begin(void *env, target_ulong sysnr);
++struct change *track_syscall_begin(void *env, target_ulong sysnr) {
++  int i;
++  QIRA_DEBUG("syscall: %d\n", sysnr);
++  if (GLOBAL_logstate->is_filtered == 1) {
++    for (i = 0; i < 0x20; i+=4) {
++      add_change(i, *(target_ulong*)(env+i), IS_WRITE | (sizeof(target_ulong)*8));
++    }
++  }
++  return add_change(sysnr, 0, IS_SYSCALL);
++}
++
++
++// all loads and store happen in libraries...
++void track_load(target_ulong addr, uint64_t data, int size) {
++  QIRA_DEBUG("load:  0x%x:%d\n", addr, size);
++  add_change(addr, data, IS_MEM | size);
++}
++
++void track_store(target_ulong addr, uint64_t data, int size) {
++  QIRA_DEBUG("store: 0x%x:%d = 0x%lX\n", addr, size, data);
++  add_change(addr, data, IS_MEM | IS_WRITE | size);
++}
++
++void track_read(target_ulong base, target_ulong offset, target_ulong data, int size) {
++  QIRA_DEBUG("read:  %x+%x:%d = %x\n", base, offset, size, data);
++  if ((int)offset < 0) return;
++  if (GLOBAL_logstate->is_filtered == 0) add_change(offset, data, size);
++}
++
++void track_write(target_ulong base, target_ulong offset, target_ulong data, int size) {
++  QIRA_DEBUG("write: %x+%x:%d = %x\n", base, offset, size, data);
++  if ((int)offset < 0) return;
++  if (GLOBAL_logstate->is_filtered == 0) add_change(offset, data, IS_WRITE | size);
++  else add_pending_change(offset, data, IS_WRITE | size);
++  //else add_change(offset, data, IS_WRITE | size);
++}
++
++#ifdef QEMU_USER
++
++void track_kernel_read(void *host_addr, target_ulong guest_addr, long len) {
++  if (unlikely(GLOBAL_QIRA_did_init == 0)) return;
++
++  // this is generating tons of changes, and maybe not too useful
++  /*QIRA_DEBUG("kernel_read: %p %X %ld\n", host_addr, guest_addr, len);
++  long i = 0;
++  //for (; i < len; i+=4) add_change(guest_addr+i, ((unsigned int*)host_addr)[i], IS_MEM | 32);
++  for (; i < len; i+=1) add_change(guest_addr+i, ((unsigned char*)host_addr)[i], IS_MEM | 8);*/
++}
++
++void track_kernel_write(void *host_addr, target_ulong guest_addr, long len) {
++  if (unlikely(GLOBAL_QIRA_did_init == 0)) return;
++  // clamp at 0x40, badness
++  //if (len > 0x40) len = 0x40;
++
++  QIRA_DEBUG("kernel_write: %p %X %ld\n", host_addr, guest_addr, len);
++  long i = 0;
++  //for (; i < len; i+=4) add_change(guest_addr+i, ((unsigned int*)host_addr)[i], IS_MEM | IS_WRITE | 32);
++  for (; i < len; i+=1) add_change(guest_addr+i, ((unsigned char*)host_addr)[i], IS_MEM | IS_WRITE | 8);
++}
++
++#endif
++
++// careful, this does it twice, MMIO?
++#define R(x,y,z) (track_load(x,(uint64_t)y,z),y)
++#define W(x,y,z) (track_store(x,(uint64_t)y,z),x)
++
++#else
++
++#define R(x,y,z) y
++#define W(x,y,z) x
++#define track_read(x,y,z) ;
++#define track_write(w,x,y,z) ;
++
++#endif
++
++
+ #ifdef CONFIG_SOFTMMU
+ # define qemu_ld_ub \
+     helper_ret_ldub_mmu(env, taddr, oi, (uintptr_t)tb_ptr)
+@@ -443,25 +707,298 @@ static bool tci_compare64(uint64_t u0, u
+ # define qemu_st_beq(X) \
+     helper_be_stq_mmu(env, taddr, X, oi, (uintptr_t)tb_ptr)
+ #else
+-# define qemu_ld_ub      ldub_p(g2h(taddr))
+-# define qemu_ld_leuw    lduw_le_p(g2h(taddr))
+-# define qemu_ld_leul    (uint32_t)ldl_le_p(g2h(taddr))
+-# define qemu_ld_leq     ldq_le_p(g2h(taddr))
+-# define qemu_ld_beuw    lduw_be_p(g2h(taddr))
+-# define qemu_ld_beul    (uint32_t)ldl_be_p(g2h(taddr))
+-# define qemu_ld_beq     ldq_be_p(g2h(taddr))
+-# define qemu_st_b(X)    stb_p(g2h(taddr), X)
+-# define qemu_st_lew(X)  stw_le_p(g2h(taddr), X)
+-# define qemu_st_lel(X)  stl_le_p(g2h(taddr), X)
+-# define qemu_st_leq(X)  stq_le_p(g2h(taddr), X)
+-# define qemu_st_bew(X)  stw_be_p(g2h(taddr), X)
+-# define qemu_st_bel(X)  stl_be_p(g2h(taddr), X)
+-# define qemu_st_beq(X)  stq_be_p(g2h(taddr), X)
++# define qemu_ld_ub      R(taddr, ldub_p(g2h(taddr)), 8)
++# define qemu_ld_leuw    R(taddr, lduw_le_p(g2h(taddr)), 16)
++# define qemu_ld_leul    R(taddr, (uint32_t)ldl_le_p(g2h(taddr)), 32)
++# define qemu_ld_leq     R(taddr, ldq_le_p(g2h(taddr)), 64)
++# define qemu_ld_beuw    R(taddr, lduw_be_p(g2h(taddr)), 16)
++# define qemu_ld_beul    R(taddr, (uint32_t)ldl_be_p(g2h(taddr)), 32)
++# define qemu_ld_beq     R(taddr, ldq_be_p(g2h(taddr)), 64)
++# define qemu_st_b(X)    stb_p(g2h(W(taddr,X,8)), X)
++# define qemu_st_lew(X)  stw_le_p(g2h(W(taddr,X,16)), X)
++# define qemu_st_lel(X)  stl_le_p(g2h(W(taddr,X,32)), X)
++# define qemu_st_leq(X)  stq_le_p(g2h(W(taddr,X,64)), X)
++# define qemu_st_bew(X)  stw_be_p(g2h(W(taddr,X,16)), X)
++# define qemu_st_bel(X)  stl_be_p(g2h(W(taddr,X,32)), X)
++# define qemu_st_beq(X)  stq_be_p(g2h(W(taddr,X,64)), X)
++#endif
++
++// poorly written, and it fills in holes
++int get_next_id(void);
++int get_next_id(void) {
++  char fn[PATH_MAX];
++  int this_id = 0;
++  struct stat junk;
++  while (1) {
++    sprintf(fn, "/tmp/qira_logs/%d", this_id);
++    if (stat(fn, &junk) == -1) break;
++    this_id++;
++  }
++  return this_id;
++}
++
++int run_QIRA_log_from_fd(CPUArchState *env, int qira_log_fd, uint32_t to_change);
++int run_QIRA_log_from_fd(CPUArchState *env, int qira_log_fd, uint32_t to_change) {
++  struct change pchange;
++  // skip the first change
++  lseek(qira_log_fd, sizeof(pchange), SEEK_SET);
++  int ret = 0;
++  while(1) {
++    if (read(qira_log_fd, &pchange, sizeof(pchange)) != sizeof(pchange)) { break; }
++    uint32_t flags = pchange.flags;
++    if (!(flags & IS_VALID)) break;
++    if (pchange.changelist_number >= to_change) break;
++    QIRA_DEBUG("running old change %lX %d\n", pchange.address, pchange.changelist_number);
++
++#ifdef QEMU_USER
++#ifdef R_EAX
++    if (flags & IS_SYSCALL) {
++      // replay all the syscalls?
++      // skip reads
++      if (pchange.address == FAKE_SYSCALL_LOADSEG) {
++        //printf("LOAD_SEG!\n");
++        helper_load_seg(env, pchange.data >> 32, pchange.data & 0xFFFFFFFF);
++      } else if (pchange.address != 3) {
++        env->regs[R_EAX] = do_syscall(env, env->regs[R_EAX], env->regs[R_EBX], env->regs[R_ECX], env->regs[R_EDX], env->regs[R_ESI], env->regs[R_EDI], env->regs[R_EBP], 0, 0);
++      }               
++    }
++#endif
++
++    // wrong for system, we need this
++    if (flags & IS_WRITE) {
++      void *base;
++      if (flags & IS_MEM) { base = g2h(pchange.address); }
++      else { base = ((void *)env) + pchange.address; }
++      memcpy(base, &pchange.data, (flags&SIZE_MASK) >> 3);
++    }
++#endif
++    ret++;
++  }
++  return ret;
++}
++
++void run_QIRA_mods(CPUArchState *env, int this_id);
++void run_QIRA_mods(CPUArchState *env, int this_id) {
++  char fn[PATH_MAX];
++  sprintf(fn, "/tmp/qira_logs/%d_mods", this_id);
++  int qira_log_fd = open(fn, O_RDONLY);
++  if (qira_log_fd == -1) return;
++
++  // seek past the header
++  lseek(qira_log_fd, sizeof(struct logstate), SEEK_SET);
++
++  // run all the changes in this file
++  int count = run_QIRA_log_from_fd(env, qira_log_fd, 0xFFFFFFFF);
++
++  close(qira_log_fd);
++
++  printf("+++ REPLAY %d MODS DONE with entry count %d\n", this_id, count);
++}
++
++void run_QIRA_log(CPUArchState *env, int this_id, int to_change);
++void run_QIRA_log(CPUArchState *env, int this_id, int to_change) {
++  char fn[PATH_MAX];
++  sprintf(fn, "/tmp/qira_logs/%d", this_id);
++
++  int qira_log_fd, qira_log_fd_ = open(fn, O_RDONLY);
++  // qira_log_fd_ must be 30, if it isn't, i'm not sure what happened
++  dup2(qira_log_fd_, 100+this_id);
++  close(qira_log_fd_);
++  qira_log_fd = 100+this_id;
++
++  struct logstate plogstate;
++  if (read(qira_log_fd, &plogstate, sizeof(plogstate)) != sizeof(plogstate)) {
++    printf("HEADER READ ISSUE!\n");
++    return;
++  }
++
++  printf("+++ REPLAY %d START on fd %d(%d)\n", this_id, qira_log_fd, qira_log_fd_);
++
++  // check if this one has a parent and recurse here
++  // BUG: FD ISSUE!
++  QIRA_DEBUG("parent is %d with first_change %d\n", plogstate.parent_id, plogstate.first_changelist_number);
++  if (plogstate.parent_id != -1) {
++    run_QIRA_log(env, plogstate.parent_id, plogstate.first_changelist_number);
++  }
++
++  int count = run_QIRA_log_from_fd(env, qira_log_fd, to_change);
++
++  close(qira_log_fd);
++
++  printf("+++ REPLAY %d DONE to %d with entry count %d\n", this_id, to_change, count);
++}
++
++bool is_filtered_address(target_ulong pc, bool ignore_gatetrace);
++bool is_filtered_address(target_ulong pc, bool ignore_gatetrace) {
++  // to remove the warning
++  uint64_t bpc = (uint64_t)pc;
++
++  // do this check before the tracelibraries one
++  if (unlikely(GLOBAL_gatetrace) && !ignore_gatetrace) {
++    if (GLOBAL_gatetrace == bpc) GLOBAL_gatetrace = 0;
++    else return true;
++  }
++
++  // TODO(geohot): FIX THIS!, filter anything that isn't the user binary and not dynamic
++  if (unlikely(GLOBAL_tracelibraries)) {
++    return false;
++  } else {
++    return is_library_addr(pc);
++    // return ((bpc > 0x80000000 && bpc < 0xf6800000) || bpc >= 0x100000000);
++  }
++}
++
++void real_target_disas(FILE *out, CPUState *env, target_ulong code, target_ulong size, int flags);
++void target_disas(FILE *out, CPUState *env, target_ulong code, target_ulong size, int flags) {
++  OPEN_GLOBAL_ASM_FILE
++
++  if (is_filtered_address(code, true)) return;
++
++  flock(fileno(GLOBAL_asm_file), LOCK_EX);
++  real_target_disas(GLOBAL_asm_file, env, code, size, flags);
++  flock(fileno(GLOBAL_asm_file), LOCK_UN);
++
++  fflush(GLOBAL_asm_file);
++}
++
++
++int GLOBAL_last_was_syscall = 0;
++uint32_t GLOBAL_last_fork_change = -1;
++target_long last_pc = 0;
++
++void write_out_base(CPUArchState *env, int id);
++
++void write_out_base(CPUArchState *env, int id) {
++#ifdef QEMU_USER
++  CPUState *cpu = ENV_GET_CPU(env);
++  TaskState *ts = (TaskState *)cpu->opaque;
++
++  char fn[PATH_MAX];
++  char envfn[PATH_MAX];
++
++  sprintf(envfn, "/tmp/qira_logs/%d_env", id);
++  FILE *envf = fopen(envfn, "wb");
++
++  // could still be wrong, clipping on env vars
++  target_ulong ss = ts->info->start_stack;
++  target_ulong se = (ts->info->arg_end + (TARGET_PAGE_SIZE - 1)) & TARGET_PAGE_MASK;
++
++  /*while (h2g_valid(g2h(se))) {
++    printf("%x\n", g2h(se));
++    fflush(stdout);
++    se += TARGET_PAGE_SIZE;
++  }*/
++
++  //target_ulong ss = ts->info->arg_start;
++  //target_ulong se = ts->info->arg_end;
++
++  fwrite(g2h(ss), 1, se-ss, envf);
++  fclose(envf);
++
++  sprintf(fn, "/tmp/qira_logs/%d_base", id);
++  FILE *f = fopen(fn, "w");
++
++
++  // code copied from linux-user/syscall.c
++  FILE *maps = fopen("/proc/self/maps", "r");
++  char *line = NULL;
++  size_t len = 0;
++  while (getline(&line, &len, maps) != -1) {
++    int fields, dev_maj, dev_min, inode;
++    uint64_t min, max, offset;
++    char flag_r, flag_w, flag_x, flag_p;
++    char path[512] = "";
++    fields = sscanf(line, "%"PRIx64"-%"PRIx64" %c%c%c%c %"PRIx64" %x:%x %d"
++                    " %512s", &min, &max, &flag_r, &flag_w, &flag_x,
++                    &flag_p, &offset, &dev_maj, &dev_min, &inode, path);
++    if ((fields < 10) || (fields > 11)) { continue; }
++
++    if (h2g_valid(min) && h2g_valid(max) && strlen(path) && flag_w == '-') {
++      fprintf(f, TARGET_ABI_FMT_lx "-" TARGET_ABI_FMT_lx " %"PRIx64" %s\n", h2g(min), h2g(max), offset, path);
++      //printf("%p - %p -- %s", h2g(min), h2g(max), line);
++      //fflush(stdout);
++    }
++
++    /*printf("%s", line);
++    fflush(stdout);*/
++  }
++  fclose(maps);
++
++  // env
++  fprintf(f, TARGET_ABI_FMT_lx "-" TARGET_ABI_FMT_lx " %"PRIx64" %s\n", ss, se, (uint64_t)0, envfn);
++
++  fclose(f);
+ #endif
++}
++
+ 
+ /* Interpret pseudo code in tb. */
+ uintptr_t tcg_qemu_tb_exec(CPUArchState *env, uint8_t *tb_ptr)
+ {
++#ifdef QIRA_TRACKING
++    CPUState *cpu = ENV_GET_CPU(env);
++    TranslationBlock *tb = cpu->current_tb;
++    //TaskState *ts = (TaskState *)cpu->opaque;
++
++    if (unlikely(GLOBAL_QIRA_did_init == 0)) { 
++      // get next id
++      if (GLOBAL_id == -1) { GLOBAL_id = get_next_id(); }
++
++      // these are the base libraries we load
++      write_out_base(env, GLOBAL_id);
++
++      init_QIRA(env, GLOBAL_id);
++
++      // these three arguments (parent_id, start_clnum, id) must be passed into QIRA
++      // this now runs after init_QIRA
++      if (GLOBAL_parent_id != -1) {
++        run_QIRA_log(env, GLOBAL_parent_id, GLOBAL_start_clnum);
++        run_QIRA_mods(env, GLOBAL_id);
++      }
++
++      return 0;
++    }
++
++    if (unlikely(GLOBAL_logstate->this_pid != getpid())) {
++      GLOBAL_start_clnum = GLOBAL_last_fork_change + 1;
++      GLOBAL_parent_id = GLOBAL_id;
++
++      // BUG: race condition
++      GLOBAL_id = get_next_id();
++
++      // this fixes the PID
++      init_QIRA(env, GLOBAL_id);
++    }
++
++    // set this every time, it's not in shmem
++    GLOBAL_last_fork_change = GLOBAL_logstate->changelist_number;
++
++    if (GLOBAL_last_was_syscall) {
++      #ifdef R_EAX
++        add_change((void *)&env->regs[R_EAX] - (void *)env, env->regs[R_EAX], IS_WRITE | (sizeof(target_ulong)<<3));
++      #endif
++      #ifdef TARGET_ARM
++        //first register is 0 from enum
++        add_change((void *)&env->regs[0] - (void *)env, env->regs[0], IS_WRITE | (sizeof(target_ulong)<<3));
++      #endif
++      GLOBAL_last_was_syscall = 0;
++    }
++
++    if (is_filtered_address(tb->pc, false)) {
++      GLOBAL_logstate->is_filtered = 1;
++    } else {
++      if (GLOBAL_logstate->is_filtered == 1) {
++        commit_pending_changes();
++        GLOBAL_logstate->is_filtered = 0;
++      }
++      GLOBAL_logstate->changelist_number++;
++      add_change(tb->pc, tb->size, IS_START);
++    }
++
++
++    QIRA_DEBUG("set changelist %d at %x(%d)\n", GLOBAL_logstate->changelist_number, tb->pc, tb->size);
++#endif
++
+     long tcg_temps[CPU_TEMP_BUF_NLONGS];
+     uintptr_t sp_value = (uintptr_t)(tcg_temps + CPU_TEMP_BUF_NLONGS);
+     uintptr_t next_tb = 0;
+@@ -472,6 +1009,7 @@ uintptr_t tcg_qemu_tb_exec(CPUArchState
+ 
+     for (;;) {
+         TCGOpcode opc = tb_ptr[0];
++        //printf("exec : %d\n", opc);
+ #if !defined(NDEBUG)
+         uint8_t op_size = tb_ptr[1];
+         uint8_t *old_code_ptr = tb_ptr;
+@@ -479,6 +1017,7 @@ uintptr_t tcg_qemu_tb_exec(CPUArchState
+         tcg_target_ulong t0;
+         tcg_target_ulong t1;
+         tcg_target_ulong t2;
++        tcg_target_ulong a0,a1,a2,a3;
+         tcg_target_ulong label;
+         TCGCond condition;
+         target_ulong taddr;
+@@ -501,11 +1040,56 @@ uintptr_t tcg_qemu_tb_exec(CPUArchState
+         switch (opc) {
+         case INDEX_op_call:
+             t0 = tci_read_ri(&tb_ptr);
++            a0 = tci_read_reg(TCG_REG_R0);
++            a1 = tci_read_reg(TCG_REG_R1);
++            a2 = tci_read_reg(TCG_REG_R2);
++            a3 = tci_read_reg(TCG_REG_R3);
++            //printf("op_call: %X\n", t0);
++            // helper_function raise_interrupt, load_seg
++#ifdef R_EAX
++            struct change *a = NULL;
++
++            if ((void*)t0 == helper_load_seg) {
++              if (GLOBAL_logstate->is_filtered == 1) {
++                commit_pending_changes();
++              }
++              a = track_syscall_begin(env, FAKE_SYSCALL_LOADSEG);
++              a->data = a1<<32 | a2;
++              //printf("LOAD SEG %x %x %x %x\n", a0, a1, a2, a3);
++            } else if ((void*)t0 == helper_raise_interrupt) {
++              if (GLOBAL_logstate->is_filtered == 1) {
++                commit_pending_changes();
++                // syscalls always get a change?
++                /*GLOBAL_logstate->changelist_number++;
++                add_change(tb->pc, tb->size, IS_START);*/
++              }
++              a = track_syscall_begin(env, env->regs[R_EAX]);
++              GLOBAL_last_was_syscall = 1;
++            }
++#endif
++#ifdef TARGET_ARM
++            struct change *a = NULL;
++            if ((void*)t0 == helper_exception_with_syndrome) {
++              if (GLOBAL_logstate->is_filtered == 1) {
++                commit_pending_changes();
++              }
++              a = track_syscall_begin(env, env->regs[0]);
++              GLOBAL_last_was_syscall = 1;
++            }
++#endif
++#ifdef TARGET_MIPS
++            struct change *a = NULL;
++            if ((void*)t0 == helper_raise_exception && a1 == EXCP_SYSCALL) {
++              if (GLOBAL_logstate->is_filtered == 1) {
++                commit_pending_changes();
++              }
++              a = track_syscall_begin(env, env->active_tc.gpr[2]);
++              GLOBAL_last_was_syscall = 1;
++            }
++#endif
++
+ #if TCG_TARGET_REG_BITS == 32
+-            tmp64 = ((helper_function)t0)(tci_read_reg(TCG_REG_R0),
+-                                          tci_read_reg(TCG_REG_R1),
+-                                          tci_read_reg(TCG_REG_R2),
+-                                          tci_read_reg(TCG_REG_R3),
++            tmp64 = ((helper_function)t0)(a0,a1,a2,a3,
+                                           tci_read_reg(TCG_REG_R5),
+                                           tci_read_reg(TCG_REG_R6),
+                                           tci_read_reg(TCG_REG_R7),
+@@ -515,10 +1099,7 @@ uintptr_t tcg_qemu_tb_exec(CPUArchState
+             tci_write_reg(TCG_REG_R0, tmp64);
+             tci_write_reg(TCG_REG_R1, tmp64 >> 32);
+ #else
+-            tmp64 = ((helper_function)t0)(tci_read_reg(TCG_REG_R0),
+-                                          tci_read_reg(TCG_REG_R1),
+-                                          tci_read_reg(TCG_REG_R2),
+-                                          tci_read_reg(TCG_REG_R3),
++            tmp64 = ((helper_function)t0)(a0,a1,a2,a3,
+                                           tci_read_reg(TCG_REG_R5));
+             tci_write_reg(TCG_REG_R0, tmp64);
+ #endif
+@@ -569,6 +1150,7 @@ uintptr_t tcg_qemu_tb_exec(CPUArchState
+             t0 = *tb_ptr++;
+             t1 = tci_read_r(&tb_ptr);
+             t2 = tci_read_s32(&tb_ptr);
++            track_read(t1, t2, *(uint8_t *)(t1 + t2), 32);
+             tci_write_reg8(t0, *(uint8_t *)(t1 + t2));
+             break;
+         case INDEX_op_ld8s_i32:
+@@ -582,18 +1164,21 @@ uintptr_t tcg_qemu_tb_exec(CPUArchState
+             t0 = *tb_ptr++;
+             t1 = tci_read_r(&tb_ptr);
+             t2 = tci_read_s32(&tb_ptr);
++            track_read(t1, t2, *(uint32_t *)(t1 + t2), 32);
+             tci_write_reg32(t0, *(uint32_t *)(t1 + t2));
+             break;
+         case INDEX_op_st8_i32:
+             t0 = tci_read_r8(&tb_ptr);
+             t1 = tci_read_r(&tb_ptr);
+             t2 = tci_read_s32(&tb_ptr);
++            track_write(t1, t2, t0, 32);
+             *(uint8_t *)(t1 + t2) = t0;
+             break;
+         case INDEX_op_st16_i32:
+             t0 = tci_read_r16(&tb_ptr);
+             t1 = tci_read_r(&tb_ptr);
+             t2 = tci_read_s32(&tb_ptr);
++            track_write(t1, t2, t0, 32);
+             *(uint16_t *)(t1 + t2) = t0;
+             break;
+         case INDEX_op_st_i32:
+@@ -601,6 +1186,7 @@ uintptr_t tcg_qemu_tb_exec(CPUArchState
+             t1 = tci_read_r(&tb_ptr);
+             t2 = tci_read_s32(&tb_ptr);
+             assert(t1 != sp_value || (int32_t)t2 < 0);
++            track_write(t1, t2, t0, 32);
+             *(uint32_t *)(t1 + t2) = t0;
+             break;
+ 
+@@ -838,6 +1424,7 @@ uintptr_t tcg_qemu_tb_exec(CPUArchState
+             t0 = *tb_ptr++;
+             t1 = tci_read_r(&tb_ptr);
+             t2 = tci_read_s32(&tb_ptr);
++            track_read(t1, t2, *(uint8_t *)(t1 + t2), 8);
+             tci_write_reg8(t0, *(uint8_t *)(t1 + t2));
+             break;
+         case INDEX_op_ld8s_i64:
+@@ -849,36 +1436,42 @@ uintptr_t tcg_qemu_tb_exec(CPUArchState
+             t0 = *tb_ptr++;
+             t1 = tci_read_r(&tb_ptr);
+             t2 = tci_read_s32(&tb_ptr);
++            track_read(t1, t2, *(uint32_t *)(t1 + t2), 32);
+             tci_write_reg32(t0, *(uint32_t *)(t1 + t2));
+             break;
+         case INDEX_op_ld32s_i64:
+             t0 = *tb_ptr++;
+             t1 = tci_read_r(&tb_ptr);
+             t2 = tci_read_s32(&tb_ptr);
++            track_read(t1, t2, *(int32_t *)(t1 + t2), 32);
+             tci_write_reg32s(t0, *(int32_t *)(t1 + t2));
+             break;
+         case INDEX_op_ld_i64:
+             t0 = *tb_ptr++;
+             t1 = tci_read_r(&tb_ptr);
+             t2 = tci_read_s32(&tb_ptr);
++            track_read(t1, t2, *(uint64_t *)(t1 + t2), 64);
+             tci_write_reg64(t0, *(uint64_t *)(t1 + t2));
+             break;
+         case INDEX_op_st8_i64:
+             t0 = tci_read_r8(&tb_ptr);
+             t1 = tci_read_r(&tb_ptr);
+             t2 = tci_read_s32(&tb_ptr);
++            track_write(t1, t2, t0, 64);
+             *(uint8_t *)(t1 + t2) = t0;
+             break;
+         case INDEX_op_st16_i64:
+             t0 = tci_read_r16(&tb_ptr);
+             t1 = tci_read_r(&tb_ptr);
+             t2 = tci_read_s32(&tb_ptr);
++            track_write(t1, t2, t0, 64);
+             *(uint16_t *)(t1 + t2) = t0;
+             break;
+         case INDEX_op_st32_i64:
+             t0 = tci_read_r32(&tb_ptr);
+             t1 = tci_read_r(&tb_ptr);
+             t2 = tci_read_s32(&tb_ptr);
++            track_write(t1, t2, t0, 64);
+             *(uint32_t *)(t1 + t2) = t0;
+             break;
+         case INDEX_op_st_i64:
+@@ -886,6 +1479,7 @@ uintptr_t tcg_qemu_tb_exec(CPUArchState
+             t1 = tci_read_r(&tb_ptr);
+             t2 = tci_read_s32(&tb_ptr);
+             assert(t1 != sp_value || (int32_t)t2 < 0);
++            track_write(t1, t2, t0, 64);
+             *(uint64_t *)(t1 + t2) = t0;
+             break;
+ 
+@@ -1088,6 +1682,7 @@ uintptr_t tcg_qemu_tb_exec(CPUArchState
+         case INDEX_op_goto_tb:
+             t0 = tci_read_i32(&tb_ptr);
+             assert(tb_ptr == old_code_ptr + op_size);
++            //printf("goto_tb: %lx\n", t0);
+             tb_ptr += (int32_t)t0;
+             continue;
+         case INDEX_op_qemu_ld_i32:
+@@ -1237,5 +1832,14 @@ uintptr_t tcg_qemu_tb_exec(CPUArchState
+         assert(tb_ptr == old_code_ptr + op_size);
+     }
+ exit:
++#ifdef QIRA_TRACKING
++    // this fixes the jump instruction merging bug
++    // with the last_pc hack for ARM, might break some x86 reps
++    if (next_tb != 0 && last_pc != tb->pc) {
++      next_tb = 0;
++    }
++#endif
++    last_pc = tb->pc;
+     return next_tb;
+ }
++
+--- ./qemu-2.5.1/linux-user/main.c	2016-03-30 06:01:17.000000000 +0900
++++ ./qemu-2.5.1-patched/linux-user/main.c	2016-08-18 02:32:07.296017060 +0900
+@@ -37,7 +37,7 @@
+ char *exec_path;
+ 
+ int singlestep;
+-static const char *filename;
++const char *filename;
+ static const char *argv0;
+ static int gdbstub_port;
+ static envlist_t *envlist;
+@@ -275,6 +275,7 @@ void cpu_loop(CPUX86State *env)
+     int trapnr;
+     abi_ulong pc;
+     target_siginfo_t info;
++    void *a;
+ 
+     for(;;) {
+         cpu_exec_start(cs);
+@@ -3899,6 +3900,28 @@ struct qemu_argument {
+     const char *help;
+ };
+ 
++extern int GLOBAL_parent_id, GLOBAL_start_clnum, GLOBAL_id;
++
++static void handle_arg_qirachild(const char *arg) {
++  singlestep = 1; // always
++
++  int ret = sscanf(arg, "%d %d %d", &GLOBAL_parent_id, &GLOBAL_start_clnum, &GLOBAL_id);
++  if (ret != 3) {
++    printf("CORRUPT qirachild\n");
++  }
++}
++
++extern int GLOBAL_tracelibraries;
++
++static void handle_arg_tracelibraries(const char *arg) {
++  GLOBAL_tracelibraries = 1;
++}
++
++extern uint64_t GLOBAL_gatetrace;
++static void handle_arg_gatetrace(const char *arg) {
++  GLOBAL_gatetrace = strtoull(arg, NULL, 0);
++}
++
+ static const struct qemu_argument arg_table[] = {
+     {"h",          "",                 false, handle_arg_help,
+      "",           "print this help"},
+@@ -3933,6 +3956,12 @@ static const struct qemu_argument arg_ta
+      "pagesize",   "set the host page size to 'pagesize'"},
+     {"singlestep", "QEMU_SINGLESTEP",  false, handle_arg_singlestep,
+      "",           "run in singlestep mode"},
++    {"qirachild",  "QIRA_CHILD",  true, handle_arg_qirachild,
++     "",           "parent_id, start_clnum, id"},
++    {"tracelibraries",  "QIRA_TRACELIBRARIES",  false, handle_arg_tracelibraries,
++     "",           ""},
++    {"gatetrace",  "QIRA_GATETRACE",  true, handle_arg_gatetrace,
++     "",           "address to gate starting trace on"},
+     {"strace",     "QEMU_STRACE",      false, handle_arg_strace,
+      "",           "log system calls"},
+     {"seed",       "QEMU_RAND_SEED",   true,  handle_arg_randseed,
+--- ./qemu-2.5.1/linux-user/syscall.c	2016-03-30 06:01:17.000000000 +0900
++++ ./qemu-2.5.1-patched/linux-user/syscall.c	2016-08-18 02:32:07.300017032 +0900
+@@ -5663,6 +5663,8 @@ static target_timer_t get_timer_id(abi_l
+     return timerid;
+ }
+ 
++extern void add_to_librarymap(const char *name, abi_ulong begin, abi_ulong end);
++
+ /* do_syscall() should always have a single exit point at the end so
+    that actions, such as logging of syscall results, can be performed.
+    All errnos that do_syscall() returns must be -TARGET_<errcode>. */
+@@ -10029,6 +10031,24 @@ fail:
+ #endif
+     if(do_strace)
+         print_syscall_ret(num, ret);
++
++#ifdef TARGET_NR_mmap2
++    if (num == TARGET_NR_mmap || num == TARGET_NR_mmap2){
++#else
++    if (num == TARGET_NR_mmap){
++#endif
++        int fd = arg5;
++        target_ulong mapaddr = ret;
++        target_ulong size = arg2;
++        if (fd >= 30){
++            add_to_librarymap("unknown", mapaddr, mapaddr+size);
++        }
++    }else if (num == TARGET_NR_open){
++        /* here we could store the fd->libname mapping */
++    }else if (num == TARGET_NR_close){
++        /* here we could clear the fd->libname mapping */
++    }
++
+     return ret;
+ efault:
+     ret = -TARGET_EFAULT;
+--- ./qemu-2.5.1/linux-user/qemu.h	2016-03-30 06:01:17.000000000 +0900
++++ ./qemu-2.5.1-patched/linux-user/qemu.h	2016-08-18 02:32:07.296017060 +0900
+@@ -22,6 +22,8 @@
+ 
+ #define THREAD __thread
+ 
++#define QIRA_TRACKING
++
+ /* This struct is used to hold certain information about the image.
+  * Basically, it replicates in user space what would be certain
+  * task_struct fields in the kernel
+@@ -362,6 +364,7 @@ static inline int access_ok(int type, ab
+ #define get_user_u8(x, gaddr)  get_user((x), (gaddr), uint8_t)
+ #define get_user_s8(x, gaddr)  get_user((x), (gaddr), int8_t)
+ 
++
+ /* copy_from_user() and copy_to_user() are usually used to copy data
+  * buffers between the target and host.  These internally perform
+  * locking/unlocking of the memory.
+@@ -375,10 +378,17 @@ abi_long copy_to_user(abi_ulong gaddr, v
+    any byteswapping.  lock_user may return either a pointer to the guest
+    memory, or a temporary buffer.  */
+ 
++
++#ifdef QIRA_TRACKING
++void track_kernel_read(void *host_addr, target_ulong guest_addr, long len);
++void track_kernel_write(void *host_addr, target_ulong guest_addr, long len);
++#endif
++
+ /* Lock an area of guest memory into the host.  If copy is true then the
+    host area will have the same contents as the guest.  */
+ static inline void *lock_user(int type, abi_ulong guest_addr, long len, int copy)
+ {
++    void *ret;
+     if (!access_ok(type, guest_addr, len))
+         return NULL;
+ #ifdef DEBUG_REMAP
+@@ -389,11 +399,18 @@ static inline void *lock_user(int type,
+             memcpy(addr, g2h(guest_addr), len);
+         else
+             memset(addr, 0, len);
+-        return addr;
++        ret = addr;
+     }
+ #else
+-    return g2h(guest_addr);
++    ret = g2h(guest_addr);
+ #endif
++
++#ifdef QIRA_TRACKING
++    if (type == VERIFY_READ) {
++      track_kernel_read(ret, guest_addr, len);
++    }
++#endif
++    return ret;
+ }
+ 
+ /* Unlock an area of guest memory.  The first LEN bytes must be
+@@ -402,6 +419,11 @@ static inline void *lock_user(int type,
+ static inline void unlock_user(void *host_ptr, abi_ulong guest_addr,
+                                long len)
+ {
++#ifdef QIRA_TRACKING
++    if (len > 0) {
++      track_kernel_write(host_ptr, guest_addr, len);
++    }
++#endif
+ 
+ #ifdef DEBUG_REMAP
+     if (!host_ptr)
+--- ./qemu-2.5.1/linux-user/strace.c	2016-03-30 06:01:17.000000000 +0900
++++ ./qemu-2.5.1-patched/linux-user/strace.c	2016-08-18 02:32:07.296017060 +0900
+@@ -11,6 +11,16 @@
+ #include <sched.h>
+ #include "qemu.h"
+ 
++#undef TARGET_ABI_FMT_lx
++#ifdef TARGET_ABI32
++#define TARGET_ABI_FMT_lx "%x"
++#else
++#define TARGET_ABI_FMT_lx "%llx"
++#endif
++
++extern FILE *GLOBAL_strace_file;
++#define gemu_log(x...) { fprintf(GLOBAL_strace_file, x); fflush(GLOBAL_strace_file); }
++
+ int do_strace=0;
+ 
+ struct syscallname {
+@@ -637,10 +647,11 @@ print_raw_param(const char *fmt, abi_lon
+ static void
+ print_pointer(abi_long p, int last)
+ {
+-    if (p == 0)
++    if (p == 0) {
+         gemu_log("NULL%s", get_comma(last));
+-    else
++    } else {
+         gemu_log("0x" TARGET_ABI_FMT_lx "%s", p, get_comma(last));
++    }
+ }
+ 
+ /*
+@@ -1562,6 +1573,8 @@ static const struct syscallname scnames[
+ 
+ static int nsyscalls = ARRAY_SIZE(scnames);
+ 
++uint32_t get_current_clnum(void);
++
+ /*
+  * The public interface to this module.
+  */
+@@ -1573,6 +1586,7 @@ print_syscall(int num,
+     int i;
+     const char *format="%s(" TARGET_ABI_FMT_ld "," TARGET_ABI_FMT_ld "," TARGET_ABI_FMT_ld "," TARGET_ABI_FMT_ld "," TARGET_ABI_FMT_ld "," TARGET_ABI_FMT_ld ")";
+ 
++    gemu_log("%d ", get_current_clnum() );
+     gemu_log("%d ", getpid() );
+ 
+     for(i=0;i<nsyscalls;i++)
+--- ./qemu-2.5.1/linux-user/elfload.c	2016-03-30 06:01:17.000000000 +0900
++++ ./qemu-2.5.1-patched/linux-user/elfload.c	2016-08-18 02:32:07.292017090 +0900
+@@ -1808,6 +1808,9 @@ exit_errmsg:
+ 
+    On return: INFO values will be filled in, as necessary or available.  */
+ 
++extern struct library *GLOBAL_librarymap;
++extern const char *filename;
++
+ static void load_elf_image(const char *image_name, int image_fd,
+                            struct image_info *info, char **pinterp_name,
+                            char bprm_buf[BPRM_BUF_SIZE])
+@@ -1874,6 +1877,12 @@ static void load_elf_image(const char *i
+         load_addr = target_mmap(loaddr, hiaddr - loaddr, PROT_NONE,
+                                 MAP_PRIVATE | MAP_ANON | MAP_NORESERVE,
+                                 -1, 0);
++
++        if (strcmp(filename, image_name)){
++            if (GLOBAL_librarymap == NULL) init_librarymap();
++            add_to_librarymap(image_name, load_addr, load_addr+(hiaddr-loaddr));
++        }
++
+         if (load_addr == -1) {
+             goto exit_perror;
+         }
+--- ./qemu-2.5.1/x86_64-softmmu/hmp-commands-info.h	1970-01-01 09:00:00.000000000 +0900
++++ ./qemu-2.5.1-patched/x86_64-softmmu/hmp-commands-info.h	2016-08-18 00:27:00.143814743 +0900
+@@ -0,0 +1,511 @@
++
++
++{
++.name       = "version",
++.args_type  = "",
++.params     = "",
++.help       = "show the version of QEMU",
++.mhandler.cmd = hmp_info_version,
++},
++
++
++{
++.name       = "network",
++.args_type  = "",
++.params     = "",
++.help       = "show the network state",
++.mhandler.cmd = hmp_info_network,
++},
++
++
++{
++.name       = "chardev",
++.args_type  = "",
++.params     = "",
++.help       = "show the character devices",
++.mhandler.cmd = hmp_info_chardev,
++},
++
++
++{
++.name       = "block",
++.args_type  = "nodes:-n,verbose:-v,device:B?",
++.params     = "[-n] [-v] [device]",
++.help       = "show info of one block device or all block devices "
++"(-n: show named nodes; -v: show details)",
++.mhandler.cmd = hmp_info_block,
++},
++
++
++{
++.name       = "blockstats",
++.args_type  = "",
++.params     = "",
++.help       = "show block device statistics",
++.mhandler.cmd = hmp_info_blockstats,
++},
++
++
++{
++.name       = "block-jobs",
++.args_type  = "",
++.params     = "",
++.help       = "show progress of ongoing block device operations",
++.mhandler.cmd = hmp_info_block_jobs,
++},
++
++
++{
++.name       = "registers",
++.args_type  = "",
++.params     = "",
++.help       = "show the cpu registers",
++.mhandler.cmd = hmp_info_registers,
++},
++
++
++#if defined(TARGET_I386)
++{
++.name       = "lapic",
++.args_type  = "",
++.params     = "",
++.help       = "show local apic state",
++.mhandler.cmd = hmp_info_local_apic,
++},
++#endif
++
++
++#if defined(TARGET_I386)
++{
++.name       = "ioapic",
++.args_type  = "",
++.params     = "",
++.help       = "show io apic state",
++.mhandler.cmd = hmp_info_io_apic,
++},
++#endif
++
++
++{
++.name       = "cpus",
++.args_type  = "",
++.params     = "",
++.help       = "show infos for each CPU",
++.mhandler.cmd = hmp_info_cpus,
++},
++
++
++{
++.name       = "history",
++.args_type  = "",
++.params     = "",
++.help       = "show the command line history",
++.mhandler.cmd = hmp_info_history,
++},
++
++
++#if defined(TARGET_I386) || defined(TARGET_PPC) || defined(TARGET_MIPS) || \
++defined(TARGET_LM32) || (defined(TARGET_SPARC) && !defined(TARGET_SPARC64))
++{
++.name       = "irq",
++.args_type  = "",
++.params     = "",
++.help       = "show the interrupts statistics (if available)",
++#ifdef TARGET_SPARC
++.mhandler.cmd = sun4m_hmp_info_irq,
++#elif defined(TARGET_LM32)
++.mhandler.cmd = lm32_hmp_info_irq,
++#else
++.mhandler.cmd = hmp_info_irq,
++#endif
++},
++
++
++{
++.name       = "pic",
++.args_type  = "",
++.params     = "",
++.help       = "show i8259 (PIC) state",
++#ifdef TARGET_SPARC
++.mhandler.cmd = sun4m_hmp_info_pic,
++#elif defined(TARGET_LM32)
++.mhandler.cmd = lm32_hmp_info_pic,
++#else
++.mhandler.cmd = hmp_info_pic,
++#endif
++},
++#endif
++
++
++{
++.name       = "pci",
++.args_type  = "",
++.params     = "",
++.help       = "show PCI info",
++.mhandler.cmd = hmp_info_pci,
++},
++
++
++#if defined(TARGET_I386) || defined(TARGET_SH4) || defined(TARGET_SPARC) || \
++defined(TARGET_PPC) || defined(TARGET_XTENSA)
++{
++.name       = "tlb",
++.args_type  = "",
++.params     = "",
++.help       = "show virtual to physical memory mappings",
++.mhandler.cmd = hmp_info_tlb,
++},
++#endif
++
++
++#if defined(TARGET_I386)
++{
++.name       = "mem",
++.args_type  = "",
++.params     = "",
++.help       = "show the active virtual memory mappings",
++.mhandler.cmd = hmp_info_mem,
++},
++#endif
++
++
++{
++.name       = "mtree",
++.args_type  = "",
++.params     = "",
++.help       = "show memory tree",
++.mhandler.cmd = hmp_info_mtree,
++},
++
++
++{
++.name       = "jit",
++.args_type  = "",
++.params     = "",
++.help       = "show dynamic compiler info",
++.mhandler.cmd = hmp_info_jit,
++},
++
++
++{
++.name       = "opcount",
++.args_type  = "",
++.params     = "",
++.help       = "show dynamic compiler opcode counters",
++.mhandler.cmd = hmp_info_opcount,
++},
++
++
++{
++.name       = "kvm",
++.args_type  = "",
++.params     = "",
++.help       = "show KVM information",
++.mhandler.cmd = hmp_info_kvm,
++},
++
++
++{
++.name       = "numa",
++.args_type  = "",
++.params     = "",
++.help       = "show NUMA information",
++.mhandler.cmd = hmp_info_numa,
++},
++
++
++{
++.name       = "usb",
++.args_type  = "",
++.params     = "",
++.help       = "show guest USB devices",
++.mhandler.cmd = hmp_info_usb,
++},
++
++
++{
++.name       = "usbhost",
++.args_type  = "",
++.params     = "",
++.help       = "show host USB devices",
++.mhandler.cmd = hmp_info_usbhost,
++},
++
++
++{
++.name       = "profile",
++.args_type  = "",
++.params     = "",
++.help       = "show profiling information",
++.mhandler.cmd = hmp_info_profile,
++},
++
++
++{
++.name       = "capture",
++.args_type  = "",
++.params     = "",
++.help       = "show capture information",
++.mhandler.cmd = hmp_info_capture,
++},
++
++
++{
++.name       = "snapshots",
++.args_type  = "",
++.params     = "",
++.help       = "show the currently saved VM snapshots",
++.mhandler.cmd = hmp_info_snapshots,
++},
++
++
++{
++.name       = "status",
++.args_type  = "",
++.params     = "",
++.help       = "show the current VM status (running|paused)",
++.mhandler.cmd = hmp_info_status,
++},
++
++
++{
++.name       = "mice",
++.args_type  = "",
++.params     = "",
++.help       = "show which guest mouse is receiving events",
++.mhandler.cmd = hmp_info_mice,
++},
++
++
++{
++.name       = "vnc",
++.args_type  = "",
++.params     = "",
++.help       = "show the vnc server status",
++.mhandler.cmd = hmp_info_vnc,
++},
++
++
++#if defined(CONFIG_SPICE)
++{
++.name       = "spice",
++.args_type  = "",
++.params     = "",
++.help       = "show the spice server status",
++.mhandler.cmd = hmp_info_spice,
++},
++#endif
++
++
++{
++.name       = "name",
++.args_type  = "",
++.params     = "",
++.help       = "show the current VM name",
++.mhandler.cmd = hmp_info_name,
++},
++
++
++{
++.name       = "uuid",
++.args_type  = "",
++.params     = "",
++.help       = "show the current VM UUID",
++.mhandler.cmd = hmp_info_uuid,
++},
++
++
++{
++.name       = "cpustats",
++.args_type  = "",
++.params     = "",
++.help       = "show CPU statistics",
++.mhandler.cmd = hmp_info_cpustats,
++},
++
++
++#if defined(CONFIG_SLIRP)
++{
++.name       = "usernet",
++.args_type  = "",
++.params     = "",
++.help       = "show user network stack connection states",
++.mhandler.cmd = hmp_info_usernet,
++},
++#endif
++
++
++{
++.name       = "migrate",
++.args_type  = "",
++.params     = "",
++.help       = "show migration status",
++.mhandler.cmd = hmp_info_migrate,
++},
++
++
++{
++.name       = "migrate_capabilities",
++.args_type  = "",
++.params     = "",
++.help       = "show current migration capabilities",
++.mhandler.cmd = hmp_info_migrate_capabilities,
++},
++
++
++{
++.name       = "migrate_parameters",
++.args_type  = "",
++.params     = "",
++.help       = "show current migration parameters",
++.mhandler.cmd = hmp_info_migrate_parameters,
++},
++
++
++{
++.name       = "migrate_cache_size",
++.args_type  = "",
++.params     = "",
++.help       = "show current migration xbzrle cache size",
++.mhandler.cmd = hmp_info_migrate_cache_size,
++},
++
++
++{
++.name       = "balloon",
++.args_type  = "",
++.params     = "",
++.help       = "show balloon information",
++.mhandler.cmd = hmp_info_balloon,
++},
++
++
++{
++.name       = "qtree",
++.args_type  = "",
++.params     = "",
++.help       = "show device tree",
++.mhandler.cmd = hmp_info_qtree,
++},
++
++
++{
++.name       = "qdm",
++.args_type  = "",
++.params     = "",
++.help       = "show qdev device model list",
++.mhandler.cmd = hmp_info_qdm,
++},
++
++
++{
++.name       = "qom-tree",
++.args_type  = "path:s?",
++.params     = "[path]",
++.help       = "show QOM composition tree",
++.mhandler.cmd = hmp_info_qom_tree,
++},
++
++
++{
++.name       = "roms",
++.args_type  = "",
++.params     = "",
++.help       = "show roms",
++.mhandler.cmd = hmp_info_roms,
++},
++
++
++{
++.name       = "trace-events",
++.args_type  = "",
++.params     = "",
++.help       = "show available trace-events & their state",
++.mhandler.cmd = hmp_info_trace_events,
++},
++
++
++{
++.name       = "tpm",
++.args_type  = "",
++.params     = "",
++.help       = "show the TPM device",
++.mhandler.cmd = hmp_info_tpm,
++},
++
++
++{
++.name       = "memdev",
++.args_type  = "",
++.params     = "",
++.help       = "show memory backends",
++.mhandler.cmd = hmp_info_memdev,
++},
++
++
++{
++.name       = "memory-devices",
++.args_type  = "",
++.params     = "",
++.help       = "show memory devices",
++.mhandler.cmd = hmp_info_memory_devices,
++},
++
++
++{
++.name       = "iothreads",
++.args_type  = "",
++.params     = "",
++.help       = "show iothreads",
++.mhandler.cmd = hmp_info_iothreads,
++},
++
++
++{
++.name       = "rocker",
++.args_type  = "name:s",
++.params     = "name",
++.help       = "Show rocker switch",
++.mhandler.cmd = hmp_rocker,
++},
++
++
++{
++.name       = "rocker-ports",
++.args_type  = "name:s",
++.params     = "name",
++.help       = "Show rocker ports",
++.mhandler.cmd = hmp_rocker_ports,
++},
++
++
++{
++.name       = "rocker-of-dpa-flows",
++.args_type  = "name:s,tbl_id:i?",
++.params     = "name [tbl_id]",
++.help       = "Show rocker OF-DPA flow tables",
++.mhandler.cmd = hmp_rocker_of_dpa_flows,
++},
++
++
++{
++.name       = "rocker-of-dpa-groups",
++.args_type  = "name:s,type:i?",
++.params     = "name [type]",
++.help       = "Show rocker OF-DPA groups",
++.mhandler.cmd = hmp_rocker_of_dpa_groups,
++},
++
++
++#if defined(TARGET_S390X)
++{
++.name       = "skeys",
++.args_type  = "addr:l",
++.params     = "address",
++.help       = "Display the value of a storage key",
++.mhandler.cmd = hmp_info_skeys,
++},
++#endif
++
++
++
+--- ./qemu-2.5.1/x86_64-softmmu/config-target.h	1970-01-01 09:00:00.000000000 +0900
++++ ./qemu-2.5.1-patched/x86_64-softmmu/config-target.h	2016-08-18 00:29:41.046299692 +0900
+@@ -0,0 +1,11 @@
++/* Automatically generated by create_config - do not modify */
++#define TARGET_X86_64 1
++#define TARGET_NAME "x86_64"
++#define TARGET_I386 1
++#define CONFIG_XEN 1
++#define CONFIG_XEN_PCI_PASSTHROUGH 1
++#define CONFIG_KVM 1
++#define CONFIG_VHOST_NET 1
++#define CONFIG_SOFTMMU 1
++#define CONFIG_I386_DIS 1
++#define CONFIG_I386_DIS 1
+--- ./qemu-2.5.1/x86_64-softmmu/trace/generated-helpers.c	1970-01-01 09:00:00.000000000 +0900
++++ ./qemu-2.5.1-patched/x86_64-softmmu/trace/generated-helpers.c	2016-08-18 00:27:30.919516088 +0900
+@@ -0,0 +1,6 @@
++/* This file is autogenerated by tracetool, do not edit. */
++
++#include "qemu-common.h"
++#include "trace.h"
++#include "exec/helper-proto.h"
++
+--- ./qemu-2.5.1/translate-all.c	2016-03-30 06:01:23.000000000 +0900
++++ ./qemu-2.5.1-patched/translate-all.c	2016-08-20 14:56:27.870020341 +0900
+@@ -165,7 +165,7 @@ static TranslationBlock *tb_find_pc(uint
+ 
+ void cpu_gen_init(void)
+ {
+-    tcg_context_init(&tcg_ctx); 
++    tcg_context_init(&tcg_ctx);
+ }
+ 
+ /* Encode VAL as a signed leb128 sequence at P.
+@@ -1126,7 +1126,7 @@ TranslationBlock *tb_gen_code(CPUState *
+        the tcg optimization currently hidden inside tcg_gen_code.  All
+        that should be required is to flush the TBs, allocate a new TB,
+        re-initialize it per above, and re-do the actual code generation.  */
+-    gen_code_size = tcg_gen_code(&tcg_ctx, gen_code_buf);
++    gen_code_size = tcg_gen_code(&tcg_ctx, pc, gen_code_buf);
+     if (unlikely(gen_code_size < 0)) {
+         goto buffer_overflow;
+     }
+--- ./qemu-2.5.1/tcg/tcg.h	2016-03-30 06:01:20.000000000 +0900
++++ ./qemu-2.5.1-patched/tcg/tcg.h	2016-08-20 14:52:39.945265959 +0900
+@@ -626,7 +626,7 @@ void tcg_context_init(TCGContext *s);
+ void tcg_prologue_init(TCGContext *s);
+ void tcg_func_start(TCGContext *s);
+ 
+-int tcg_gen_code(TCGContext *s, tcg_insn_unit *gen_code_buf);
++int tcg_gen_code(TCGContext *s, target_ulong pc, tcg_insn_unit *gen_code_buf);
+ 
+ void tcg_set_frame(TCGContext *s, int reg, intptr_t start, intptr_t size);
+ 
+--- ./qemu-2.5.1/tcg/tcg.c	2016-03-30 06:01:20.000000000 +0900
++++ ./qemu-2.5.1-patched/tcg/tcg.c	2016-08-20 18:48:23.234600662 +0900
+@@ -48,6 +48,8 @@
+ 
+ #include "tcg-op.h"
+ 
++#include "vmi.h"
++
+ #if UINTPTR_MAX == UINT32_MAX
+ # define ELF_CLASS  ELFCLASS32
+ #else
+@@ -109,29 +111,47 @@ static void tcg_out_st(TCGContext *s, TC
+ static void tcg_out_call(TCGContext *s, tcg_insn_unit *target);
+ static int tcg_target_const_match(tcg_target_long val, TCGType type,
+                                   const TCGArgConstraint *arg_ct);
++
++
++static void t_tcg_out_ld(TCGContext *s, TCGType type, TCGReg ret, TCGReg arg1,
++                       intptr_t arg2);
++static void t_tcg_out_mov(TCGContext *s, TCGType type, TCGReg ret, TCGReg arg);
++static void t_tcg_out_movi(TCGContext *s, TCGType type,
++                         TCGReg ret, tcg_target_long arg);
++static void t_tcg_out_op(TCGContext *s, TCGOpcode opc, const TCGArg *args,
++                       const int *const_args);
++static void t_tcg_out_st(TCGContext *s, TCGType type, TCGReg arg, TCGReg arg1,
++                       intptr_t arg2);
++static void t_tcg_out_call(TCGContext *s, tcg_insn_unit *target);
++static void t_patch_reloc(tcg_insn_unit *code_ptr, int type,
++                        intptr_t value, intptr_t addend);
++static int t_tcg_target_const_match(tcg_target_long val, TCGType type,
++                                  const TCGArgConstraint *arg_ct);
++static int t_target_parse_constraint(TCGArgConstraint *ct, const char **pct_str);
++
+ static void tcg_out_tb_init(TCGContext *s);
+ static void tcg_out_tb_finalize(TCGContext *s);
+ 
+ 
+-
+ static TCGRegSet tcg_target_available_regs[2];
+ static TCGRegSet tcg_target_call_clobber_regs;
+ 
+-#if TCG_TARGET_INSN_UNIT_SIZE == 1
+-static __attribute__((unused)) inline void tcg_out8(TCGContext *s, uint8_t v)
++
++//#if TCG_TARGET_INSN_UNIT_SIZE == 1
++__attribute__((unused)) void tcg_out8(TCGContext *s, uint8_t v)
+ {
+     *s->code_ptr++ = v;
+ }
+ 
+-static __attribute__((unused)) inline void tcg_patch8(tcg_insn_unit *p,
++__attribute__((unused)) void tcg_patch8(tcg_insn_unit *p,
+                                                       uint8_t v)
+ {
+     *p = v;
+ }
+-#endif
++//#endif
+ 
+-#if TCG_TARGET_INSN_UNIT_SIZE <= 2
+-static __attribute__((unused)) inline void tcg_out16(TCGContext *s, uint16_t v)
++//#if TCG_TARGET_INSN_UNIT_SIZE <= 2
++__attribute__((unused)) void tcg_out16(TCGContext *s, uint16_t v)
+ {
+     if (TCG_TARGET_INSN_UNIT_SIZE == 2) {
+         *s->code_ptr++ = v;
+@@ -142,8 +162,8 @@ static __attribute__((unused)) inline vo
+     }
+ }
+ 
+-static __attribute__((unused)) inline void tcg_patch16(tcg_insn_unit *p,
+-                                                       uint16_t v)
++__attribute__((unused)) void tcg_patch16(tcg_insn_unit *p,
++                                        uint16_t v)
+ {
+     if (TCG_TARGET_INSN_UNIT_SIZE == 2) {
+         *p = v;
+@@ -151,10 +171,10 @@ static __attribute__((unused)) inline vo
+         memcpy(p, &v, sizeof(v));
+     }
+ }
+-#endif
++//#endif
+ 
+-#if TCG_TARGET_INSN_UNIT_SIZE <= 4
+-static __attribute__((unused)) inline void tcg_out32(TCGContext *s, uint32_t v)
++//#if TCG_TARGET_INSN_UNIT_SIZE <= 4
++__attribute__((unused)) void tcg_out32(TCGContext *s, uint32_t v)
+ {
+     if (TCG_TARGET_INSN_UNIT_SIZE == 4) {
+         *s->code_ptr++ = v;
+@@ -165,8 +185,8 @@ static __attribute__((unused)) inline vo
+     }
+ }
+ 
+-static __attribute__((unused)) inline void tcg_patch32(tcg_insn_unit *p,
+-                                                       uint32_t v)
++__attribute__((unused)) void tcg_patch32(tcg_insn_unit *p,
++                                        uint32_t v)
+ {
+     if (TCG_TARGET_INSN_UNIT_SIZE == 4) {
+         *p = v;
+@@ -174,10 +194,10 @@ static __attribute__((unused)) inline vo
+         memcpy(p, &v, sizeof(v));
+     }
+ }
+-#endif
++//#endif
+ 
+-#if TCG_TARGET_INSN_UNIT_SIZE <= 8
+-static __attribute__((unused)) inline void tcg_out64(TCGContext *s, uint64_t v)
++//#if TCG_TARGET_INSN_UNIT_SIZE <= 8
++__attribute__((unused)) void tcg_out64(TCGContext *s, uint64_t v)
+ {
+     if (TCG_TARGET_INSN_UNIT_SIZE == 8) {
+         *s->code_ptr++ = v;
+@@ -188,8 +208,8 @@ static __attribute__((unused)) inline vo
+     }
+ }
+ 
+-static __attribute__((unused)) inline void tcg_patch64(tcg_insn_unit *p,
+-                                                       uint64_t v)
++__attribute__((unused)) void tcg_patch64(tcg_insn_unit *p,
++                                        uint64_t v)
+ {
+     if (TCG_TARGET_INSN_UNIT_SIZE == 8) {
+         *p = v;
+@@ -197,20 +217,75 @@ static __attribute__((unused)) inline vo
+         memcpy(p, &v, sizeof(v));
+     }
+ }
+-#endif
++//#endif
++
++#define tcg_out_wrap(x) \
++  if (in_mod(now_pc)) { \
++    fprintf(stderr, "tci: %016llx\n", now_pc); \
++    t_##x; \
++  } else { \
++    x; \
++  } \
++
++/* Wrapper of tcg_out functions */
++static void _tcg_out_ld(TCGContext *s, TCGType type, TCGReg ret, TCGReg arg1,
++                       intptr_t arg2)
++{
++  tcg_out_wrap(tcg_out_ld(s, type, ret, arg1, arg2))
++}
++static void _tcg_out_mov(TCGContext *s, TCGType type, TCGReg ret, TCGReg arg)
++{
++  tcg_out_wrap(tcg_out_mov(s, type, ret, arg))
++}
++static void _tcg_out_movi(TCGContext *s, TCGType type,
++                         TCGReg ret, tcg_target_long arg)
++{
++  tcg_out_wrap(tcg_out_movi(s, type, ret, arg))
++}
++static void _tcg_out_op(TCGContext *s, TCGOpcode opc, const TCGArg *args,
++                       const int *const_args)
++{
++  tcg_out_wrap(tcg_out_op(s, opc, args, const_args))
++}
++static void _tcg_out_st(TCGContext *s, TCGType type, TCGReg arg, TCGReg arg1,
++                       intptr_t arg2)
++{
++  tcg_out_wrap(tcg_out_st(s, type, arg, arg1, arg2))
++}
++static void _tcg_out_call(TCGContext *s, tcg_insn_unit *target)
++{
++  tcg_out_wrap(tcg_out_call(s, target))
+ 
++}
++static int _tcg_target_const_match(tcg_target_long val, TCGType type,
++                                  const TCGArgConstraint *arg_ct)
++{
++  tcg_out_wrap(tcg_target_const_match(val, type, arg_ct))
++}
++
++static void _patch_reloc(tcg_insn_unit *code_ptr, int type,
++                        intptr_t value, intptr_t addend)
++{
++  tcg_out_wrap(patch_reloc(code_ptr, type, value, addend))
++}
++
++
++static int _target_parse_constraint(TCGArgConstraint *ct, const char **pct_str)
++{
++  tcg_out_wrap(target_parse_constraint(ct, pct_str))
++}
+ /* label relocation processing */
+ 
+-static void tcg_out_reloc(TCGContext *s, tcg_insn_unit *code_ptr, int type,
+-                          TCGLabel *l, intptr_t addend)
++void tcg_out_reloc(TCGContext *s, tcg_insn_unit *code_ptr, int type,
++                    TCGLabel *l, intptr_t addend)
+ {
+     TCGRelocation *r;
+ 
+     if (l->has_value) {
+         /* FIXME: This may break relocations on RISC targets that
+-           modify instruction fields in place.  The caller may not have 
++           modify instruction fields in place.  The caller may not have
+            written the initial value.  */
+-        patch_reloc(code_ptr, type, l->u.value, addend);
++        _patch_reloc(code_ptr, type, l->u.value, addend);
+     } else {
+         /* add a new relocation entry */
+         r = tcg_malloc(sizeof(TCGRelocation));
+@@ -230,7 +305,7 @@ static void tcg_out_label(TCGContext *s,
+     assert(!l->has_value);
+ 
+     for (r = l->u.first_reloc; r != NULL; r = r->next) {
+-        patch_reloc(r->ptr, r->type, value, r->addend);
++        _patch_reloc(r->ptr, r->type, value, r->addend);
+     }
+ 
+     l->has_value = 1;
+@@ -256,7 +331,7 @@ void *tcg_malloc_internal(TCGContext *s,
+ {
+     TCGPool *p;
+     int pool_size;
+-    
++
+     if (size > TCG_POOL_CHUNK_SIZE) {
+         /* big malloc: insert a new pool (XXX: could optimize) */
+         p = g_malloc(sizeof(TCGPool) + size);
+@@ -277,7 +352,7 @@ void *tcg_malloc_internal(TCGContext *s,
+                 p = g_malloc(sizeof(TCGPool) + pool_size);
+                 p->size = pool_size;
+                 p->next = NULL;
+-                if (s->pool_current) 
++                if (s->pool_current)
+                     s->pool_current->next = p;
+                 else
+                     s->pool_first = p;
+@@ -327,7 +402,7 @@ void tcg_context_init(TCGContext *s)
+ 
+     memset(s, 0, sizeof(*s));
+     s->nb_globals = 0;
+-    
++
+     /* Count total number of arguments and allocate the corresponding
+        space */
+     total_args = 0;
+@@ -936,7 +1011,7 @@ static char *tcg_get_arg_str_idx(TCGCont
+     if (idx < s->nb_globals) {
+         pstrcpy(buf, buf_size, ts->name);
+     } else {
+-        if (ts->temp_local) 
++        if (ts->temp_local)
+             snprintf(buf, buf_size, "loc%d", idx - s->nb_globals);
+         else
+             snprintf(buf, buf_size, "tmp%d", idx - s->nb_globals);
+@@ -1229,7 +1304,7 @@ void tcg_add_target_add_op_defs(const TC
+                         ct_str++;
+                         break;
+                     default:
+-                        if (target_parse_constraint(&def->args_ct[i], &ct_str) < 0) {
++                        if (_target_parse_constraint(&def->args_ct[i], &ct_str) < 0) {
+                             fprintf(stderr, "Invalid constraint '%s' for arg %d of operation '%s'\n",
+                                     ct_str, i, def->name);
+                             exit(1);
+@@ -1342,7 +1417,7 @@ static void tcg_liveness_analysis(TCGCon
+     nb_ops = s->gen_next_op_idx;
+     s->op_dead_args = tcg_malloc(nb_ops * sizeof(uint16_t));
+     s->op_sync_args = tcg_malloc(nb_ops * sizeof(uint8_t));
+-    
++
+     dead_temps = tcg_malloc(s->nb_temps);
+     mem_temps = tcg_malloc(s->nb_temps);
+     tcg_la_func_end(s, dead_temps, mem_temps);
+@@ -1621,8 +1696,8 @@ static void dump_regs(TCGContext *s)
+ 
+     for(i = 0; i < TCG_TARGET_NB_REGS; i++) {
+         if (s->reg_to_temp[i] >= 0) {
+-            printf("%s: %s\n", 
+-                   tcg_target_reg_names[i], 
++            printf("%s: %s\n",
++                   tcg_target_reg_names[i],
+                    tcg_get_arg_str_idx(s, buf, sizeof(buf), s->reg_to_temp[i]));
+         }
+     }
+@@ -1640,7 +1715,7 @@ static void check_regs(TCGContext *s)
+             ts = &s->temps[k];
+             if (ts->val_type != TEMP_VAL_REG ||
+                 ts->reg != reg) {
+-                printf("Inconsistency for register %s:\n", 
++                printf("Inconsistency for register %s:\n",
+                        tcg_target_reg_names[reg]);
+                 goto fail;
+             }
+@@ -1651,7 +1726,7 @@ static void check_regs(TCGContext *s)
+         if (ts->val_type == TEMP_VAL_REG &&
+             !ts->fixed_reg &&
+             s->reg_to_temp[ts->reg] != k) {
+-                printf("Inconsistency for temp %s:\n", 
++                printf("Inconsistency for temp %s:\n",
+                        tcg_get_arg_str_idx(s, buf, sizeof(buf), k));
+         fail:
+                 printf("reg state:\n");
+@@ -1695,7 +1770,7 @@ static inline void tcg_reg_sync(TCGConte
+         if (!ts->mem_allocated) {
+             temp_allocate_frame(s, temp);
+         }
+-        tcg_out_st(s, ts->type, reg, ts->mem_reg, ts->mem_offset);
++        _tcg_out_st(s, ts->type, reg, ts->mem_reg, ts->mem_offset);
+     }
+     ts->mem_coherent = 1;
+ }
+@@ -1773,7 +1848,7 @@ static inline void temp_sync(TCGContext
+             ts->val_type = TEMP_VAL_REG;
+             s->reg_to_temp[ts->reg] = temp;
+             ts->mem_coherent = 0;
+-            tcg_out_movi(s, ts->type, ts->reg, ts->val);
++            _tcg_out_movi(s, ts->type, ts->reg, ts->val);
+             /* fallthrough*/
+         case TEMP_VAL_REG:
+             tcg_reg_sync(s, ts->reg);
+@@ -1870,7 +1945,7 @@ static void tcg_reg_alloc_movi(TCGContex
+     if (ots->fixed_reg) {
+         /* for fixed registers, we do not do any constant
+            propagation */
+-        tcg_out_movi(s, ots->type, ots->reg, val);
++        _tcg_out_movi(s, ots->type, ots->reg, val);
+     } else {
+         /* The movi is not explicitly generated here */
+         if (ots->val_type == TEMP_VAL_REG)
+@@ -1911,10 +1986,10 @@ static void tcg_reg_alloc_mov(TCGContext
+         ts->reg = tcg_reg_alloc(s, tcg_target_available_regs[itype],
+                                 allocated_regs);
+         if (ts->val_type == TEMP_VAL_MEM) {
+-            tcg_out_ld(s, itype, ts->reg, ts->mem_reg, ts->mem_offset);
++            _tcg_out_ld(s, itype, ts->reg, ts->mem_reg, ts->mem_offset);
+             ts->mem_coherent = 1;
+         } else if (ts->val_type == TEMP_VAL_CONST) {
+-            tcg_out_movi(s, itype, ts->reg, ts->val);
++            _tcg_out_movi(s, itype, ts->reg, ts->val);
+             ts->mem_coherent = 0;
+         }
+         s->reg_to_temp[ts->reg] = args[1];
+@@ -1930,7 +2005,7 @@ static void tcg_reg_alloc_mov(TCGContext
+         if (!ots->mem_allocated) {
+             temp_allocate_frame(s, args[0]);
+         }
+-        tcg_out_st(s, otype, ts->reg, ots->mem_reg, ots->mem_offset);
++        _tcg_out_st(s, otype, ts->reg, ots->mem_reg, ots->mem_offset);
+         if (IS_DEAD_ARG(1)) {
+             temp_dead(s, args[1]);
+         }
+@@ -1964,7 +2039,7 @@ static void tcg_reg_alloc_mov(TCGContext
+                 ots->reg = tcg_reg_alloc(s, tcg_target_available_regs[otype],
+                                          allocated_regs);
+             }
+-            tcg_out_mov(s, otype, ots->reg, ts->reg);
++            _tcg_out_mov(s, otype, ots->reg, ts->reg);
+         }
+         ots->val_type = TEMP_VAL_REG;
+         ots->mem_coherent = 0;
+@@ -1975,7 +2050,7 @@ static void tcg_reg_alloc_mov(TCGContext
+     }
+ }
+ 
+-static void tcg_reg_alloc_op(TCGContext *s, 
++static void tcg_reg_alloc_op(TCGContext *s,
+                              const TCGOpDef *def, TCGOpcode opc,
+                              const TCGArg *args, uint16_t dead_args,
+                              uint8_t sync_args)
+@@ -1992,11 +2067,11 @@ static void tcg_reg_alloc_op(TCGContext
+     nb_iargs = def->nb_iargs;
+ 
+     /* copy constants */
+-    memcpy(new_args + nb_oargs + nb_iargs, 
+-           args + nb_oargs + nb_iargs, 
++    memcpy(new_args + nb_oargs + nb_iargs,
++           args + nb_oargs + nb_iargs,
+            sizeof(TCGArg) * def->nb_cargs);
+ 
+-    /* satisfy input constraints */ 
++    /* satisfy input constraints */
+     tcg_regset_set(allocated_regs, s->reserved_regs);
+     for(k = 0; k < nb_iargs; k++) {
+         i = def->sorted_args[nb_oargs + k];
+@@ -2005,13 +2080,13 @@ static void tcg_reg_alloc_op(TCGContext
+         ts = &s->temps[arg];
+         if (ts->val_type == TEMP_VAL_MEM) {
+             reg = tcg_reg_alloc(s, arg_ct->u.regs, allocated_regs);
+-            tcg_out_ld(s, ts->type, reg, ts->mem_reg, ts->mem_offset);
++            _tcg_out_ld(s, ts->type, reg, ts->mem_reg, ts->mem_offset);
+             ts->val_type = TEMP_VAL_REG;
+             ts->reg = reg;
+             ts->mem_coherent = 1;
+             s->reg_to_temp[reg] = arg;
+         } else if (ts->val_type == TEMP_VAL_CONST) {
+-            if (tcg_target_const_match(ts->val, ts->type, arg_ct)) {
++            if (_tcg_target_const_match(ts->val, ts->type, arg_ct)) {
+                 /* constant is OK for instruction */
+                 const_args[i] = 1;
+                 new_args[i] = ts->val;
+@@ -2019,7 +2094,7 @@ static void tcg_reg_alloc_op(TCGContext
+             } else {
+                 /* need to move to a register */
+                 reg = tcg_reg_alloc(s, arg_ct->u.regs, allocated_regs);
+-                tcg_out_movi(s, ts->type, reg, ts->val);
++                _tcg_out_movi(s, ts->type, reg, ts->val);
+                 ts->val_type = TEMP_VAL_REG;
+                 ts->reg = reg;
+                 ts->mem_coherent = 0;
+@@ -2057,17 +2132,17 @@ static void tcg_reg_alloc_op(TCGContext
+             /* nothing to do : the constraint is satisfied */
+         } else {
+         allocate_in_reg:
+-            /* allocate a new register matching the constraint 
++            /* allocate a new register matching the constraint
+                and move the temporary register into it */
+             reg = tcg_reg_alloc(s, arg_ct->u.regs, allocated_regs);
+-            tcg_out_mov(s, ts->type, reg, ts->reg);
++            _tcg_out_mov(s, ts->type, reg, ts->reg);
+         }
+         new_args[i] = reg;
+         const_args[i] = 0;
+         tcg_regset_set_reg(allocated_regs, reg);
+     iarg_end: ;
+     }
+-    
++
+     /* mark dead temporaries and free the associated registers */
+     for (i = nb_oargs; i < nb_oargs + nb_iargs; i++) {
+         if (IS_DEAD_ARG(i)) {
+@@ -2079,7 +2154,7 @@ static void tcg_reg_alloc_op(TCGContext
+         tcg_reg_alloc_bb_end(s, allocated_regs);
+     } else {
+         if (def->flags & TCG_OPF_CALL_CLOBBER) {
+-            /* XXX: permit generic clobber register list ? */ 
++            /* XXX: permit generic clobber register list ? */
+             for(reg = 0; reg < TCG_TARGET_NB_REGS; reg++) {
+                 if (tcg_regset_test_reg(tcg_target_call_clobber_regs, reg)) {
+                     tcg_reg_free(s, reg);
+@@ -2091,7 +2166,7 @@ static void tcg_reg_alloc_op(TCGContext
+                an exception. */
+             sync_globals(s, allocated_regs);
+         }
+-        
++
+         /* satisfy the output constraints */
+         tcg_regset_set(allocated_regs, s->reserved_regs);
+         for(k = 0; k < nb_oargs; k++) {
+@@ -2129,14 +2204,14 @@ static void tcg_reg_alloc_op(TCGContext
+     }
+ 
+     /* emit instruction */
+-    tcg_out_op(s, opc, new_args, const_args);
+-    
++    _tcg_out_op(s, opc, new_args, const_args);
++
+     /* move the outputs in the correct register if needed */
+     for(i = 0; i < nb_oargs; i++) {
+         ts = &s->temps[args[i]];
+         reg = new_args[i];
+         if (ts->fixed_reg && ts->reg != reg) {
+-            tcg_out_mov(s, ts->type, ts->reg, reg);
++            _tcg_out_mov(s, ts->type, ts->reg, reg);
+         }
+         if (NEED_SYNC_ARG(i)) {
+             tcg_reg_sync(s, reg);
+@@ -2176,7 +2251,7 @@ static void tcg_reg_alloc_call(TCGContex
+ 
+     /* assign stack slots first */
+     call_stack_size = (nb_iargs - nb_regs) * sizeof(tcg_target_long);
+-    call_stack_size = (call_stack_size + TCG_TARGET_STACK_ALIGN - 1) & 
++    call_stack_size = (call_stack_size + TCG_TARGET_STACK_ALIGN - 1) &
+         ~(TCG_TARGET_STACK_ALIGN - 1);
+     allocate_args = (call_stack_size > TCG_STATIC_CALL_ARGS_SIZE);
+     if (allocate_args) {
+@@ -2194,19 +2269,19 @@ static void tcg_reg_alloc_call(TCGContex
+         if (arg != TCG_CALL_DUMMY_ARG) {
+             ts = &s->temps[arg];
+             if (ts->val_type == TEMP_VAL_REG) {
+-                tcg_out_st(s, ts->type, ts->reg, TCG_REG_CALL_STACK, stack_offset);
++                _tcg_out_st(s, ts->type, ts->reg, TCG_REG_CALL_STACK, stack_offset);
+             } else if (ts->val_type == TEMP_VAL_MEM) {
+-                reg = tcg_reg_alloc(s, tcg_target_available_regs[ts->type], 
++                reg = tcg_reg_alloc(s, tcg_target_available_regs[ts->type],
+                                     s->reserved_regs);
+                 /* XXX: not correct if reading values from the stack */
+-                tcg_out_ld(s, ts->type, reg, ts->mem_reg, ts->mem_offset);
+-                tcg_out_st(s, ts->type, reg, TCG_REG_CALL_STACK, stack_offset);
++                _tcg_out_ld(s, ts->type, reg, ts->mem_reg, ts->mem_offset);
++                _tcg_out_st(s, ts->type, reg, TCG_REG_CALL_STACK, stack_offset);
+             } else if (ts->val_type == TEMP_VAL_CONST) {
+-                reg = tcg_reg_alloc(s, tcg_target_available_regs[ts->type], 
++                reg = tcg_reg_alloc(s, tcg_target_available_regs[ts->type],
+                                     s->reserved_regs);
+                 /* XXX: sign extend may be needed on some targets */
+-                tcg_out_movi(s, ts->type, reg, ts->val);
+-                tcg_out_st(s, ts->type, reg, TCG_REG_CALL_STACK, stack_offset);
++                _tcg_out_movi(s, ts->type, reg, ts->val);
++                _tcg_out_st(s, ts->type, reg, TCG_REG_CALL_STACK, stack_offset);
+             } else {
+                 tcg_abort();
+             }
+@@ -2215,7 +2290,7 @@ static void tcg_reg_alloc_call(TCGContex
+         stack_offset += sizeof(tcg_target_long);
+ #endif
+     }
+-    
++
+     /* assign input registers */
+     tcg_regset_set(allocated_regs, s->reserved_regs);
+     for(i = 0; i < nb_regs; i++) {
+@@ -2226,27 +2301,27 @@ static void tcg_reg_alloc_call(TCGContex
+             tcg_reg_free(s, reg);
+             if (ts->val_type == TEMP_VAL_REG) {
+                 if (ts->reg != reg) {
+-                    tcg_out_mov(s, ts->type, reg, ts->reg);
++                    _tcg_out_mov(s, ts->type, reg, ts->reg);
+                 }
+             } else if (ts->val_type == TEMP_VAL_MEM) {
+-                tcg_out_ld(s, ts->type, reg, ts->mem_reg, ts->mem_offset);
++                _tcg_out_ld(s, ts->type, reg, ts->mem_reg, ts->mem_offset);
+             } else if (ts->val_type == TEMP_VAL_CONST) {
+                 /* XXX: sign extend ? */
+-                tcg_out_movi(s, ts->type, reg, ts->val);
++                _tcg_out_movi(s, ts->type, reg, ts->val);
+             } else {
+                 tcg_abort();
+             }
+             tcg_regset_set_reg(allocated_regs, reg);
+         }
+     }
+-    
++
+     /* mark dead temporaries and free the associated registers */
+     for(i = nb_oargs; i < nb_iargs + nb_oargs; i++) {
+         if (IS_DEAD_ARG(i)) {
+             temp_dead(s, args[i]);
+         }
+     }
+-    
++
+     /* clobber call registers */
+     for(reg = 0; reg < TCG_TARGET_NB_REGS; reg++) {
+         if (tcg_regset_test_reg(tcg_target_call_clobber_regs, reg)) {
+@@ -2264,7 +2339,7 @@ static void tcg_reg_alloc_call(TCGContex
+         save_globals(s, allocated_regs);
+     }
+ 
+-    tcg_out_call(s, func_addr);
++    _tcg_out_call(s, func_addr);
+ 
+     /* assign output registers and emit moves if needed */
+     for(i = 0; i < nb_oargs; i++) {
+@@ -2275,7 +2350,7 @@ static void tcg_reg_alloc_call(TCGContex
+ 
+         if (ts->fixed_reg) {
+             if (ts->reg != reg) {
+-                tcg_out_mov(s, ts->type, ts->reg, reg);
++                _tcg_out_mov(s, ts->type, ts->reg, reg);
+             }
+         } else {
+             if (ts->val_type == TEMP_VAL_REG) {
+@@ -2316,10 +2391,10 @@ void tcg_dump_op_count(FILE *f, fprintf_
+ #endif
+ 
+ 
+-int tcg_gen_code(TCGContext *s, tcg_insn_unit *gen_code_buf)
++int tcg_gen_code(TCGContext *s, target_ulong pc, tcg_insn_unit *gen_code_buf)
+ {
+     int i, oi, oi_next, num_insns;
+-
++    now_pc = pc;
+ #ifdef CONFIG_PROFILER
+     {
+         int n;
+@@ -2473,11 +2548,11 @@ void tcg_dump_info(FILE *f, fprintf_func
+ 
+     cpu_fprintf(f, "JIT cycles          %" PRId64 " (%0.3f s at 2.4 GHz)\n",
+                 tot, tot / 2.4e9);
+-    cpu_fprintf(f, "translated TBs      %" PRId64 " (aborted=%" PRId64 " %0.1f%%)\n", 
++    cpu_fprintf(f, "translated TBs      %" PRId64 " (aborted=%" PRId64 " %0.1f%%)\n",
+                 tb_count, s->tb_count1 - tb_count,
+                 (double)(s->tb_count1 - s->tb_count)
+                 / (s->tb_count1 ? s->tb_count1 : 1) * 100.0);
+-    cpu_fprintf(f, "avg ops/TB          %0.1f max=%d\n", 
++    cpu_fprintf(f, "avg ops/TB          %0.1f max=%d\n",
+                 (double)s->op_count / tb_div_count, s->op_count_max);
+     cpu_fprintf(f, "deleted ops/TB      %0.2f\n",
+                 (double)s->del_op_count / tb_div_count);
+@@ -2487,26 +2562,26 @@ void tcg_dump_info(FILE *f, fprintf_func
+                 (double)s->code_out_len / tb_div_count);
+     cpu_fprintf(f, "avg search data/TB  %0.1f\n",
+                 (double)s->search_out_len / tb_div_count);
+-    
+-    cpu_fprintf(f, "cycles/op           %0.1f\n", 
++
++    cpu_fprintf(f, "cycles/op           %0.1f\n",
+                 s->op_count ? (double)tot / s->op_count : 0);
+-    cpu_fprintf(f, "cycles/in byte      %0.1f\n", 
++    cpu_fprintf(f, "cycles/in byte      %0.1f\n",
+                 s->code_in_len ? (double)tot / s->code_in_len : 0);
+-    cpu_fprintf(f, "cycles/out byte     %0.1f\n", 
++    cpu_fprintf(f, "cycles/out byte     %0.1f\n",
+                 s->code_out_len ? (double)tot / s->code_out_len : 0);
+     cpu_fprintf(f, "cycles/search byte     %0.1f\n",
+                 s->search_out_len ? (double)tot / s->search_out_len : 0);
+     if (tot == 0) {
+         tot = 1;
+     }
+-    cpu_fprintf(f, "  gen_interm time   %0.1f%%\n", 
++    cpu_fprintf(f, "  gen_interm time   %0.1f%%\n",
+                 (double)s->interm_time / tot * 100.0);
+-    cpu_fprintf(f, "  gen_code time     %0.1f%%\n", 
++    cpu_fprintf(f, "  gen_code time     %0.1f%%\n",
+                 (double)s->code_time / tot * 100.0);
+     cpu_fprintf(f, "optim./code time    %0.1f%%\n",
+                 (double)s->opt_time / (s->code_time ? s->code_time : 1)
+                 * 100.0);
+-    cpu_fprintf(f, "liveness/code time  %0.1f%%\n", 
++    cpu_fprintf(f, "liveness/code time  %0.1f%%\n",
+                 (double)s->la_time / (s->code_time ? s->code_time : 1) * 100.0);
+     cpu_fprintf(f, "cpu_restore count   %" PRId64 "\n",
+                 s->restore_count);
+--- ./qemu-2.5.1/cpu-exec.c	2016-03-30 06:01:14.000000000 +0900
++++ ./qemu-2.5.1-patched/cpu-exec.c	2016-08-20 18:24:37.057382818 +0900
+@@ -32,6 +32,7 @@
+ #endif
+ #include "sysemu/replay.h"
+ 
++#include "vmi.h"
+ /* -icount align implementation. */
+ 
+ typedef struct SyncClocks {
+@@ -136,6 +137,7 @@ static inline tcg_target_ulong cpu_tb_ex
+ {
+     CPUArchState *env = cpu->env_ptr;
+     uintptr_t next_tb;
++    TranslationBlock *tb = cpu->current_tb;
+ 
+ #if defined(DEBUG_DISAS)
+     if (qemu_loglevel_mask(CPU_LOG_TB_CPU)) {
+@@ -154,7 +156,19 @@ static inline tcg_target_ulong cpu_tb_ex
+ #endif /* DEBUG_DISAS */
+ 
+     cpu->can_do_io = !use_icount;
+-    next_tb = tcg_qemu_tb_exec(env, tb_ptr);
++
++    /* Tracking for kldbg */
++    //uint8_t *tc_ptr2 = tb_ptr;
++    //target_ulong mod_addr = 0xffffffff81000000;
++    mod_addr = 0x00000000000f7000;
++    mod_size = 0x10000;
++    //fprintf(stderr, "exec: 0x%016llx\n", tb->pc);
++    if (mod_addr <= tb->pc && tb->pc < mod_addr + mod_size) {
++      fprintf(stderr, "Trace: 0x%016llx\n", tb->pc);
++      next_tb = tcg_qemu_tb_trace(env, tb_ptr);
++    } else {
++      next_tb = tcg_qemu_tb_exec(env, tb_ptr);
++    }
+     cpu->can_do_io = 1;
+     trace_exec_tb_exit((void *) (next_tb & ~TB_EXIT_MASK),
+                        next_tb & TB_EXIT_MASK);
+@@ -201,6 +215,7 @@ static void cpu_exec_nocache(CPUState *c
+     cpu->current_tb = tb;
+     /* execute the generated code */
+     trace_exec_tb_nocache(tb, tb->pc);
++
+     cpu_tb_exec(cpu, tb->tc_ptr);
+     cpu->current_tb = NULL;
+     tb_phys_invalidate(tb, -1);
+@@ -517,6 +532,7 @@ int cpu_exec(CPUState *cpu)
+                     tc_ptr = tb->tc_ptr;
+                     /* execute the generated code */
+                     cpu->current_tb = tb;
++
+                     next_tb = cpu_tb_exec(cpu, tc_ptr);
+                     cpu->current_tb = NULL;
+                     switch (next_tb & TB_EXIT_MASK) {
+--- ./qemu-2.5.1/tcg_tracer.c	1970-01-01 09:00:00.000000000 +0900
++++ ./qemu-2.5.1-patched/tcg_tracer.c	2016-08-20 14:51:50.786334800 +0900
+@@ -0,0 +1,1849 @@
++/*
++ * Tiny Code Interpreter for QEMU
++ *
++ * Copyright (c) 2009, 2011 Stefan Weil
++ *
++ * This program is free software: you can redistribute it and/or modify
++ * it under the terms of the GNU General Public License as published by
++ * the Free Software Foundation, either version 2 of the License, or
++ * (at your option) any later version.
++ *
++ * This program is distributed in the hope that it will be useful,
++ * but WITHOUT ANY WARRANTY; without even the implied warranty of
++ * MERCHANTABILITY or FITNESS FOR A PARTICULAR PURPOSE.  See the
++ * GNU General Public License for more details.
++ *
++ * You should have received a copy of the GNU General Public License
++ * along with this program.  If not, see <http://www.gnu.org/licenses/>.
++ */
++
++#include "config.h"
++
++/* Defining NDEBUG disables assertions (which makes the code faster). */
++#if !defined(CONFIG_DEBUG_TCG) && !defined(NDEBUG)
++# define NDEBUG
++#endif
++
++#include "qemu-common.h"
++#include "exec/user/abitypes.h"
++#include "exec/exec-all.h"           /* MAX_OPC_PARAM_IARGS */
++#include "exec/cpu_ldst.h"
++#include "tcg_tracer.h"
++#include "tcg-op.h"
++#include "librarymap.h"
++
++/* Marker for missing code. */
++#define TODO() \
++    do { \
++        fprintf(stderr, "TODO %s:%u: %s()\n", \
++                __FILE__, __LINE__, __func__); \
++        tcg_abort(); \
++    } while (0)
++
++#if MAX_OPC_PARAM_IARGS != 5
++# error Fix needed, number of supported input arguments changed!
++#endif
++#if T_TCG_TARGET_REG_BITS == 32
++typedef uint64_t (*helper_function)(tcg_target_ulong, tcg_target_ulong,
++                                    tcg_target_ulong, tcg_target_ulong,
++                                    tcg_target_ulong, tcg_target_ulong,
++                                    tcg_target_ulong, tcg_target_ulong,
++                                    tcg_target_ulong, tcg_target_ulong);
++#else
++typedef uint64_t (*helper_function)(tcg_target_ulong, tcg_target_ulong,
++                                    tcg_target_ulong, tcg_target_ulong,
++                                    tcg_target_ulong);
++#endif
++
++static tcg_target_ulong tci_reg[T_TCG_TARGET_NB_REGS];
++
++static tcg_target_ulong tci_read_reg(T_TCGReg index)
++{
++    printf("read: tci_reg[%d]\n", index);
++    //assert(index < ARRAY_SIZE(tci_reg));
++    if(index >= ARRAY_SIZE(tci_reg)) abort();
++    return tci_reg[index];
++}
++
++#if T_TCG_TARGET_HAS_ext8s_i32 || T_TCG_TARGET_HAS_ext8s_i64
++static int8_t tci_read_reg8s(T_TCGReg index)
++{
++    return (int8_t)tci_read_reg(index);
++}
++#endif
++
++#if T_TCG_TARGET_HAS_ext16s_i32 || T_TCG_TARGET_HAS_ext16s_i64
++static int16_t tci_read_reg16s(T_TCGReg index)
++{
++    return (int16_t)tci_read_reg(index);
++}
++#endif
++
++#if T_TCG_TARGET_REG_BITS == 64
++static int32_t tci_read_reg32s(T_TCGReg index)
++{
++    return (int32_t)tci_read_reg(index);
++}
++#endif
++
++static uint8_t tci_read_reg8(T_TCGReg index)
++{
++    return (uint8_t)tci_read_reg(index);
++}
++
++static uint16_t tci_read_reg16(T_TCGReg index)
++{
++    return (uint16_t)tci_read_reg(index);
++}
++
++static uint32_t tci_read_reg32(T_TCGReg index)
++{
++    return (uint32_t)tci_read_reg(index);
++}
++
++#if T_TCG_TARGET_REG_BITS == 64
++static uint64_t tci_read_reg64(T_TCGReg index)
++{
++    return tci_read_reg(index);
++}
++#endif
++
++static void tci_write_reg(T_TCGReg index, tcg_target_ulong value)
++{
++    assert(index < ARRAY_SIZE(tci_reg));
++    assert(index != T_TCG_AREG0);
++    assert(index != T_TCG_REG_CALL_STACK);
++    tci_reg[index] = value;
++}
++
++#if T_TCG_TARGET_REG_BITS == 64
++static void tci_write_reg32s(T_TCGReg index, int32_t value)
++{
++    tci_write_reg(index, value);
++}
++#endif
++
++static void tci_write_reg8(T_TCGReg index, uint8_t value)
++{
++    tci_write_reg(index, value);
++}
++
++static void tci_write_reg32(T_TCGReg index, uint32_t value)
++{
++    tci_write_reg(index, value);
++}
++
++#if T_TCG_TARGET_REG_BITS == 32
++static void tci_write_reg64(uint32_t high_index, uint32_t low_index,
++                            uint64_t value)
++{
++    tci_write_reg(low_index, value);
++    tci_write_reg(high_index, value >> 32);
++}
++#elif T_TCG_TARGET_REG_BITS == 64
++static void tci_write_reg64(T_TCGReg index, uint64_t value)
++{
++    tci_write_reg(index, value);
++}
++#endif
++
++#if T_TCG_TARGET_REG_BITS == 32
++/* Create a 64 bit value from two 32 bit values. */
++static uint64_t tci_uint64(uint32_t high, uint32_t low)
++{
++    return ((uint64_t)high << 32) + low;
++}
++#endif
++
++/* Read constant (native size) from bytecode. */
++static tcg_target_ulong tci_read_i(uint8_t **tb_ptr)
++{
++    tcg_target_ulong value = *(tcg_target_ulong *)(*tb_ptr);
++    *tb_ptr += sizeof(value);
++    return value;
++}
++
++/* Read unsigned constant (32 bit) from bytecode. */
++static uint32_t tci_read_i32(uint8_t **tb_ptr)
++{
++    uint32_t value = *(uint32_t *)(*tb_ptr);
++    *tb_ptr += sizeof(value);
++    return value;
++}
++
++/* Read signed constant (32 bit) from bytecode. */
++static int32_t tci_read_s32(uint8_t **tb_ptr)
++{
++    int32_t value = *(int32_t *)(*tb_ptr);
++    *tb_ptr += sizeof(value);
++    return value;
++}
++
++#if T_TCG_TARGET_REG_BITS == 64
++/* Read constant (64 bit) from bytecode. */
++static uint64_t tci_read_i64(uint8_t **tb_ptr)
++{
++    uint64_t value = *(uint64_t *)(*tb_ptr);
++    *tb_ptr += sizeof(value);
++    return value;
++}
++#endif
++
++/* Read indexed register (native size) from bytecode. */
++static tcg_target_ulong tci_read_r(uint8_t **tb_ptr)
++{
++    tcg_target_ulong value = tci_read_reg(**tb_ptr);
++    *tb_ptr += 1;
++    return value;
++}
++
++/* Read indexed register (8 bit) from bytecode. */
++static uint8_t tci_read_r8(uint8_t **tb_ptr)
++{
++    uint8_t value = tci_read_reg8(**tb_ptr);
++    *tb_ptr += 1;
++    return value;
++}
++
++#if T_TCG_TARGET_HAS_ext8s_i32 || T_TCG_TARGET_HAS_ext8s_i64
++/* Read indexed register (8 bit signed) from bytecode. */
++static int8_t tci_read_r8s(uint8_t **tb_ptr)
++{
++    int8_t value = tci_read_reg8s(**tb_ptr);
++    *tb_ptr += 1;
++    return value;
++}
++#endif
++
++/* Read indexed register (16 bit) from bytecode. */
++static uint16_t tci_read_r16(uint8_t **tb_ptr)
++{
++    uint16_t value = tci_read_reg16(**tb_ptr);
++    *tb_ptr += 1;
++    return value;
++}
++
++#if T_TCG_TARGET_HAS_ext16s_i32 || T_TCG_TARGET_HAS_ext16s_i64
++/* Read indexed register (16 bit signed) from bytecode. */
++static int16_t tci_read_r16s(uint8_t **tb_ptr)
++{
++    int16_t value = tci_read_reg16s(**tb_ptr);
++    *tb_ptr += 1;
++    return value;
++}
++#endif
++
++/* Read indexed register (32 bit) from bytecode. */
++static uint32_t tci_read_r32(uint8_t **tb_ptr)
++{
++    uint32_t value = tci_read_reg32(**tb_ptr);
++    *tb_ptr += 1;
++    return value;
++}
++
++#if T_TCG_TARGET_REG_BITS == 32
++/* Read two indexed registers (2 * 32 bit) from bytecode. */
++static uint64_t tci_read_r64(uint8_t **tb_ptr)
++{
++    uint32_t low = tci_read_r32(tb_ptr);
++    return tci_uint64(tci_read_r32(tb_ptr), low);
++}
++#elif T_TCG_TARGET_REG_BITS == 64
++/* Read indexed register (32 bit signed) from bytecode. */
++static int32_t tci_read_r32s(uint8_t **tb_ptr)
++{
++    int32_t value = tci_read_reg32s(**tb_ptr);
++    *tb_ptr += 1;
++    return value;
++}
++
++/* Read indexed register (64 bit) from bytecode. */
++static uint64_t tci_read_r64(uint8_t **tb_ptr)
++{
++    uint64_t value = tci_read_reg64(**tb_ptr);
++    *tb_ptr += 1;
++    return value;
++}
++#endif
++
++/* Read indexed register(s) with target address from bytecode. */
++static target_ulong tci_read_ulong(uint8_t **tb_ptr)
++{
++    target_ulong taddr = tci_read_r(tb_ptr);
++#if TARGET_LONG_BITS > T_TCG_TARGET_REG_BITS
++    taddr += (uint64_t)tci_read_r(tb_ptr) << 32;
++#endif
++    return taddr;
++}
++
++/* Read indexed register or constant (native size) from bytecode. */
++static tcg_target_ulong tci_read_ri(uint8_t **tb_ptr)
++{
++    tcg_target_ulong value;
++    T_TCGReg r = **tb_ptr;
++    *tb_ptr += 1;
++    if (r == T_TCG_CONST) {
++        value = tci_read_i(tb_ptr);
++    } else {
++        value = tci_read_reg(r);
++    }
++    return value;
++}
++
++/* Read indexed register or constant (32 bit) from bytecode. */
++static uint32_t tci_read_ri32(uint8_t **tb_ptr)
++{
++    uint32_t value;
++    T_TCGReg r = **tb_ptr;
++    *tb_ptr += 1;
++    if (r == T_TCG_CONST) {
++        value = tci_read_i32(tb_ptr);
++    } else {
++        value = tci_read_reg32(r);
++    }
++    return value;
++}
++
++#if T_TCG_TARGET_REG_BITS == 32
++/* Read two indexed registers or constants (2 * 32 bit) from bytecode. */
++static uint64_t tci_read_ri64(uint8_t **tb_ptr)
++{
++    uint32_t low = tci_read_ri32(tb_ptr);
++    return tci_uint64(tci_read_ri32(tb_ptr), low);
++}
++#elif T_TCG_TARGET_REG_BITS == 64
++/* Read indexed register or constant (64 bit) from bytecode. */
++static uint64_t tci_read_ri64(uint8_t **tb_ptr)
++{
++    uint64_t value;
++    T_TCGReg r = **tb_ptr;
++    *tb_ptr += 1;
++    if (r == T_TCG_CONST) {
++        value = tci_read_i64(tb_ptr);
++    } else {
++        value = tci_read_reg64(r);
++    }
++    return value;
++}
++#endif
++
++static tcg_target_ulong tci_read_label(uint8_t **tb_ptr)
++{
++    tcg_target_ulong label = tci_read_i(tb_ptr);
++    assert(label != 0);
++    return label;
++}
++
++static bool tci_compare32(uint32_t u0, uint32_t u1, TCGCond condition)
++{
++    bool result = false;
++    int32_t i0 = u0;
++    int32_t i1 = u1;
++    switch (condition) {
++    case TCG_COND_EQ:
++        result = (u0 == u1);
++        break;
++    case TCG_COND_NE:
++        result = (u0 != u1);
++        break;
++    case TCG_COND_LT:
++        result = (i0 < i1);
++        break;
++    case TCG_COND_GE:
++        result = (i0 >= i1);
++        break;
++    case TCG_COND_LE:
++        result = (i0 <= i1);
++        break;
++    case TCG_COND_GT:
++        result = (i0 > i1);
++        break;
++    case TCG_COND_LTU:
++        result = (u0 < u1);
++        break;
++    case TCG_COND_GEU:
++        result = (u0 >= u1);
++        break;
++    case TCG_COND_LEU:
++        result = (u0 <= u1);
++        break;
++    case TCG_COND_GTU:
++        result = (u0 > u1);
++        break;
++    default:
++        TODO();
++    }
++    return result;
++}
++
++static bool tci_compare64(uint64_t u0, uint64_t u1, TCGCond condition)
++{
++    bool result = false;
++    int64_t i0 = u0;
++    int64_t i1 = u1;
++    switch (condition) {
++    case TCG_COND_EQ:
++        result = (u0 == u1);
++        break;
++    case TCG_COND_NE:
++        result = (u0 != u1);
++        break;
++    case TCG_COND_LT:
++        result = (i0 < i1);
++        break;
++    case TCG_COND_GE:
++        result = (i0 >= i1);
++        break;
++    case TCG_COND_LE:
++        result = (i0 <= i1);
++        break;
++    case TCG_COND_GT:
++        result = (i0 > i1);
++        break;
++    case TCG_COND_LTU:
++        result = (u0 < u1);
++        break;
++    case TCG_COND_GEU:
++        result = (u0 >= u1);
++        break;
++    case TCG_COND_LEU:
++        result = (u0 <= u1);
++        break;
++    case TCG_COND_GTU:
++        result = (u0 > u1);
++        break;
++    default:
++        TODO();
++    }
++    return result;
++}
++
++// if it's not softmmu, assume it's user
++#ifndef CONFIG_SOFTMMU
++#define QEMU_USER
++#endif
++
++#define QIRA_TRACKING
++
++#ifdef QIRA_TRACKING
++
++#include <fcntl.h>
++#include <sys/mman.h>
++#include <sys/file.h>
++#include <stdio.h>
++#ifdef QEMU_USER
++#include "qemu.h"
++#endif
++
++//#define QIRA_DEBUG(...) {}
++//#define QIRA_DEBUG qemu_debug
++#define QIRA_DEBUG printf
++
++// struct storing change data
++struct change {
++  uint64_t address;
++  uint64_t data;
++  uint32_t changelist_number;
++  uint32_t flags;
++};
++
++// prototypes
++void init_QIRA(CPUArchState *env, int id);
++struct change *add_change(target_ulong addr, uint64_t data, uint32_t flags);
++void track_load(target_ulong a, uint64_t data, int size);
++void track_store(target_ulong a, uint64_t data, int size);
++void track_read(target_ulong base, target_ulong offset, target_ulong data, int size);
++void track_write(target_ulong base, target_ulong offset, target_ulong data, int size);
++void add_pending_change(target_ulong addr, uint64_t data, uint32_t flags);
++void commit_pending_changes(void);
++void resize_change_buffer(size_t size);
++
++// defined in qemu.h
++//void track_kernel_read(void *host_addr, target_ulong guest_addr, long len);
++//void track_kernel_write(void *host_addr, target_ulong guest_addr, long len);
++
++#define IS_VALID      0x80000000
++#define IS_WRITE      0x40000000
++#define IS_MEM        0x20000000
++#define IS_START      0x10000000
++#define IS_SYSCALL    0x08000000
++#define SIZE_MASK 0xFF
++
++#define FAKE_SYSCALL_LOADSEG 0x10001
++
++int GLOBAL_QIRA_did_init = 0;
++CPUArchState *GLOBAL_CPUArchState;
++struct change *GLOBAL_change_buffer;
++
++uint32_t GLOBAL_qira_log_fd;
++size_t GLOBAL_change_size;
++
++// current state that must survive forks
++struct logstate {
++  uint32_t change_count;
++  uint32_t changelist_number;
++  uint32_t is_filtered;
++  uint32_t first_changelist_number;
++  int parent_id;
++  int this_pid;
++};
++struct logstate *GLOBAL_logstate;
++
++// input args
++uint32_t GLOBAL_start_clnum = 1;
++int GLOBAL_parent_id = -1, GLOBAL_id = -1;
++
++int GLOBAL_tracelibraries = 0;
++uint64_t GLOBAL_gatetrace = 0;
++
++#define OPEN_GLOBAL_ASM_FILE { if (unlikely(GLOBAL_asm_file == NULL)) { GLOBAL_asm_file = fopen("/tmp/qira_asm", "a"); } }
++FILE *GLOBAL_asm_file = NULL;
++FILE *GLOBAL_strace_file = NULL;
++
++// should be 0ed on startup
++#define PENDING_CHANGES_MAX_ADDR 0x100
++struct change GLOBAL_pending_changes[PENDING_CHANGES_MAX_ADDR/4];
++
++/* kernel module infromation */
++target_ulong mod_addr;
++size_t mod_size;
++target_ulong now_pc;
++
++uint32_t get_current_clnum(void);
++uint32_t get_current_clnum(void) {
++  return GLOBAL_logstate->changelist_number;
++}
++
++void resize_change_buffer(size_t size) {
++  if(ftruncate(GLOBAL_qira_log_fd, size)) {
++    perror("ftruncate");
++  }
++  GLOBAL_change_buffer = mmap(NULL, size,
++         PROT_READ | PROT_WRITE, MAP_SHARED, GLOBAL_qira_log_fd, 0);
++  GLOBAL_logstate = (struct logstate *)GLOBAL_change_buffer;
++  if (GLOBAL_change_buffer == NULL) QIRA_DEBUG("MMAP FAILED!\n");
++}
++
++void init_QIRA(CPUArchState *env, int id) {
++  QIRA_DEBUG("init QIRA called\n");
++  GLOBAL_QIRA_did_init = 1;
++  GLOBAL_CPUArchState = env;   // unused
++
++  OPEN_GLOBAL_ASM_FILE
++
++  char fn[PATH_MAX];
++  sprintf(fn, "/tmp/qira_logs/%d_strace", id);
++  GLOBAL_strace_file = fopen(fn, "w");
++
++  sprintf(fn, "/tmp/qira_logs/%d", id);
++
++  // unlink it first
++  unlink(fn);
++  GLOBAL_qira_log_fd = open(fn, O_RDWR | O_CREAT, 0644);
++  GLOBAL_change_size = 1;
++  memset(GLOBAL_pending_changes, 0, (PENDING_CHANGES_MAX_ADDR/4) * sizeof(struct change));
++
++  resize_change_buffer(GLOBAL_change_size * sizeof(struct change));
++  memset(GLOBAL_change_buffer, 0, sizeof(struct change));
++
++  // skip the first change
++  GLOBAL_logstate->change_count = 1;
++  GLOBAL_logstate->is_filtered = 0;
++  GLOBAL_logstate->this_pid = getpid();
++
++  // do this after init_QIRA
++  GLOBAL_logstate->changelist_number = GLOBAL_start_clnum-1;
++  GLOBAL_logstate->first_changelist_number = GLOBAL_start_clnum;
++  GLOBAL_logstate->parent_id = GLOBAL_parent_id;
++
++  // use all fds up to 30
++  int i;
++  int dupme = open("/dev/null", O_RDONLY);
++  struct stat useless;
++  for (i = 0; i < 30; i++) {
++    sprintf(fn, "/proc/self/fd/%d", i);
++    if (stat(fn, &useless) == -1) {
++      //printf("dup2 %d %d\n", dupme, i);
++      dup2(dupme, i);
++    }
++  }
++
++  if (GLOBAL_librarymap == NULL){
++      init_librarymap();
++  }
++
++  // no more opens can happen here in QEMU, only the target process
++}
++
++struct change *add_change(target_ulong addr, uint64_t data, uint32_t flags) {
++  size_t cc = __sync_fetch_and_add(&GLOBAL_logstate->change_count, 1);
++
++  if (cc == GLOBAL_change_size) {
++    // double the buffer size
++    QIRA_DEBUG("doubling buffer with size %d\n", GLOBAL_change_size);
++    resize_change_buffer(GLOBAL_change_size * sizeof(struct change) * 2);
++    GLOBAL_change_size *= 2;
++  }
++  struct change *this_change = GLOBAL_change_buffer + cc;
++  this_change->address = (uint64_t)addr;
++  this_change->data = data;
++  this_change->changelist_number = GLOBAL_logstate->changelist_number;
++  this_change->flags = IS_VALID | flags;
++  return this_change;
++}
++
++void add_pending_change(target_ulong addr, uint64_t data, uint32_t flags) {
++  if (addr < PENDING_CHANGES_MAX_ADDR) {
++    GLOBAL_pending_changes[addr/4].address = (uint64_t)addr;
++    GLOBAL_pending_changes[addr/4].data = data;
++    GLOBAL_pending_changes[addr/4].flags = IS_VALID | flags;
++  }
++}
++
++void commit_pending_changes(void) {
++  int i;
++  for (i = 0; i < PENDING_CHANGES_MAX_ADDR/4; i++) {
++    struct change *c = &GLOBAL_pending_changes[i];
++    if (c->flags & IS_VALID) add_change(c->address, c->data, c->flags);
++  }
++  memset(GLOBAL_pending_changes, 0, (PENDING_CHANGES_MAX_ADDR/4) * sizeof(struct change));
++}
++
++struct change *track_syscall_begin(void *env, target_ulong sysnr);
++struct change *track_syscall_begin(void *env, target_ulong sysnr) {
++  int i;
++  QIRA_DEBUG("syscall: %d\n", sysnr);
++  if (GLOBAL_logstate->is_filtered == 1) {
++    for (i = 0; i < 0x20; i+=4) {
++      add_change(i, *(target_ulong*)(env+i), IS_WRITE | (sizeof(target_ulong)*8));
++    }
++  }
++  return add_change(sysnr, 0, IS_SYSCALL);
++}
++
++
++// all loads and store happen in libraries...
++void track_load(target_ulong addr, uint64_t data, int size) {
++  QIRA_DEBUG("load:  0x%x:%d\n", addr, size);
++  add_change(addr, data, IS_MEM | size);
++}
++
++void track_store(target_ulong addr, uint64_t data, int size) {
++  QIRA_DEBUG("store: 0x%x:%d = 0x%lX\n", addr, size, data);
++  add_change(addr, data, IS_MEM | IS_WRITE | size);
++}
++
++void track_read(target_ulong base, target_ulong offset, target_ulong data, int size) {
++  QIRA_DEBUG("read:  %x+%x:%d = %x\n", base, offset, size, data);
++  if ((int)offset < 0) return;
++  if (GLOBAL_logstate->is_filtered == 0) add_change(offset, data, size);
++}
++
++void track_write(target_ulong base, target_ulong offset, target_ulong data, int size) {
++  QIRA_DEBUG("write: %x+%x:%d = %x\n", base, offset, size, data);
++  if ((int)offset < 0) return;
++  if (GLOBAL_logstate->is_filtered == 0) add_change(offset, data, IS_WRITE | size);
++  else add_pending_change(offset, data, IS_WRITE | size);
++  //else add_change(offset, data, IS_WRITE | size);
++}
++
++//#ifdef QEMU_USER
++
++void track_kernel_read(void *host_addr, target_ulong guest_addr, long len) {
++  if (unlikely(GLOBAL_QIRA_did_init == 0)) return;
++
++  // this is generating tons of changes, and maybe not too useful
++  /*QIRA_DEBUG("kernel_read: %p %X %ld\n", host_addr, guest_addr, len);
++  long i = 0;
++  //for (; i < len; i+=4) add_change(guest_addr+i, ((unsigned int*)host_addr)[i], IS_MEM | 32);
++  for (; i < len; i+=1) add_change(guest_addr+i, ((unsigned char*)host_addr)[i], IS_MEM | 8);*/
++}
++
++void track_kernel_write(void *host_addr, target_ulong guest_addr, long len) {
++  if (unlikely(GLOBAL_QIRA_did_init == 0)) return;
++  // clamp at 0x40, badness
++  //if (len > 0x40) len = 0x40;
++
++  QIRA_DEBUG("kernel_write: %p %X %ld\n", host_addr, guest_addr, len);
++  long i = 0;
++  //for (; i < len; i+=4) add_change(guest_addr+i, ((unsigned int*)host_addr)[i], IS_MEM | IS_WRITE | 32);
++  for (; i < len; i+=1) add_change(guest_addr+i, ((unsigned char*)host_addr)[i], IS_MEM | IS_WRITE | 8);
++}
++
++//#endif
++
++// careful, this does it twice, MMIO?
++#define R(x,y,z) (track_load(x,(uint64_t)y,z),y)
++#define W(x,y,z) (track_store(x,(uint64_t)y,z),x)
++
++#else
++
++#define R(x,y,z) y
++#define W(x,y,z) x
++#define track_read(x,y,z) ;
++#define track_write(w,x,y,z) ;
++
++#endif
++
++
++#ifdef CONFIG_SOFTMMU
++# define qemu_ld_ub \
++    helper_ret_ldub_mmu(env, taddr, oi, (uintptr_t)tb_ptr)
++# define qemu_ld_leuw \
++    helper_le_lduw_mmu(env, taddr, oi, (uintptr_t)tb_ptr)
++# define qemu_ld_leul \
++    helper_le_ldul_mmu(env, taddr, oi, (uintptr_t)tb_ptr)
++# define qemu_ld_leq \
++    helper_le_ldq_mmu(env, taddr, oi, (uintptr_t)tb_ptr)
++# define qemu_ld_beuw \
++    helper_be_lduw_mmu(env, taddr, oi, (uintptr_t)tb_ptr)
++# define qemu_ld_beul \
++    helper_be_ldul_mmu(env, taddr, oi, (uintptr_t)tb_ptr)
++# define qemu_ld_beq \
++    helper_be_ldq_mmu(env, taddr, oi, (uintptr_t)tb_ptr)
++# define qemu_st_b(X) \
++    helper_ret_stb_mmu(env, taddr, X, oi, (uintptr_t)tb_ptr)
++# define qemu_st_lew(X) \
++    helper_le_stw_mmu(env, taddr, X, oi, (uintptr_t)tb_ptr)
++# define qemu_st_lel(X) \
++    helper_le_stl_mmu(env, taddr, X, oi, (uintptr_t)tb_ptr)
++# define qemu_st_leq(X) \
++    helper_le_stq_mmu(env, taddr, X, oi, (uintptr_t)tb_ptr)
++# define qemu_st_bew(X) \
++    helper_be_stw_mmu(env, taddr, X, oi, (uintptr_t)tb_ptr)
++# define qemu_st_bel(X) \
++    helper_be_stl_mmu(env, taddr, X, oi, (uintptr_t)tb_ptr)
++# define qemu_st_beq(X) \
++    helper_be_stq_mmu(env, taddr, X, oi, (uintptr_t)tb_ptr)
++#else
++# define qemu_ld_ub      R(taddr, ldub_p(g2h(taddr)), 8)
++# define qemu_ld_leuw    R(taddr, lduw_le_p(g2h(taddr)), 16)
++# define qemu_ld_leul    R(taddr, (uint32_t)ldl_le_p(g2h(taddr)), 32)
++# define qemu_ld_leq     R(taddr, ldq_le_p(g2h(taddr)), 64)
++# define qemu_ld_beuw    R(taddr, lduw_be_p(g2h(taddr)), 16)
++# define qemu_ld_beul    R(taddr, (uint32_t)ldl_be_p(g2h(taddr)), 32)
++# define qemu_ld_beq     R(taddr, ldq_be_p(g2h(taddr)), 64)
++# define qemu_st_b(X)    stb_p(g2h(W(taddr,X,8)), X)
++# define qemu_st_lew(X)  stw_le_p(g2h(W(taddr,X,16)), X)
++# define qemu_st_lel(X)  stl_le_p(g2h(W(taddr,X,32)), X)
++# define qemu_st_leq(X)  stq_le_p(g2h(W(taddr,X,64)), X)
++# define qemu_st_bew(X)  stw_be_p(g2h(W(taddr,X,16)), X)
++# define qemu_st_bel(X)  stl_be_p(g2h(W(taddr,X,32)), X)
++# define qemu_st_beq(X)  stq_be_p(g2h(W(taddr,X,64)), X)
++#endif
++
++// poorly written, and it fills in holes
++int get_next_id(void);
++int get_next_id(void) {
++  char fn[PATH_MAX];
++  int this_id = 0;
++  struct stat junk;
++  while (1) {
++    sprintf(fn, "/tmp/qira_logs/%d", this_id);
++    if (stat(fn, &junk) == -1) break;
++    this_id++;
++  }
++  return this_id;
++}
++
++int run_QIRA_log_from_fd(CPUArchState *env, int qira_log_fd, uint32_t to_change);
++int run_QIRA_log_from_fd(CPUArchState *env, int qira_log_fd, uint32_t to_change) {
++  struct change pchange;
++  // skip the first change
++  lseek(qira_log_fd, sizeof(pchange), SEEK_SET);
++  int ret = 0;
++  while(1) {
++    if (read(qira_log_fd, &pchange, sizeof(pchange)) != sizeof(pchange)) { break; }
++    uint32_t flags = pchange.flags;
++    if (!(flags & IS_VALID)) break;
++    if (pchange.changelist_number >= to_change) break;
++    QIRA_DEBUG("running old change %lX %d\n", pchange.address, pchange.changelist_number);
++
++#ifdef QEMU_USER
++#ifdef R_EAX
++    if (flags & IS_SYSCALL) {
++      // replay all the syscalls?
++      // skip reads
++      if (pchange.address == FAKE_SYSCALL_LOADSEG) {
++        //printf("LOAD_SEG!\n");
++        helper_load_seg(env, pchange.data >> 32, pchange.data & 0xFFFFFFFF);
++      } else if (pchange.address != 3) {
++        env->regs[R_EAX] = do_syscall(env, env->regs[R_EAX], env->regs[R_EBX], env->regs[R_ECX], env->regs[R_EDX], env->regs[R_ESI], env->regs[R_EDI], env->regs[R_EBP], 0, 0);
++      }
++    }
++#endif
++
++    // wrong for system, we need this
++    if (flags & IS_WRITE) {
++      void *base;
++      if (flags & IS_MEM) { base = g2h(pchange.address); }
++      else { base = ((void *)env) + pchange.address; }
++      memcpy(base, &pchange.data, (flags&SIZE_MASK) >> 3);
++    }
++#endif
++    ret++;
++  }
++  return ret;
++}
++
++void run_QIRA_mods(CPUArchState *env, int this_id);
++void run_QIRA_mods(CPUArchState *env, int this_id) {
++  char fn[PATH_MAX];
++  sprintf(fn, "/tmp/qira_logs/%d_mods", this_id);
++  int qira_log_fd = open(fn, O_RDONLY);
++  if (qira_log_fd == -1) return;
++
++  // seek past the header
++  lseek(qira_log_fd, sizeof(struct logstate), SEEK_SET);
++
++  // run all the changes in this file
++  int count = run_QIRA_log_from_fd(env, qira_log_fd, 0xFFFFFFFF);
++
++  close(qira_log_fd);
++
++  printf("+++ REPLAY %d MODS DONE with entry count %d\n", this_id, count);
++}
++
++void run_QIRA_log(CPUArchState *env, int this_id, int to_change);
++void run_QIRA_log(CPUArchState *env, int this_id, int to_change) {
++  char fn[PATH_MAX];
++  sprintf(fn, "/tmp/qira_logs/%d", this_id);
++
++  int qira_log_fd, qira_log_fd_ = open(fn, O_RDONLY);
++  // qira_log_fd_ must be 30, if it isn't, i'm not sure what happened
++  dup2(qira_log_fd_, 100+this_id);
++  close(qira_log_fd_);
++  qira_log_fd = 100+this_id;
++
++  struct logstate plogstate;
++  if (read(qira_log_fd, &plogstate, sizeof(plogstate)) != sizeof(plogstate)) {
++    printf("HEADER READ ISSUE!\n");
++    return;
++  }
++
++  printf("+++ REPLAY %d START on fd %d(%d)\n", this_id, qira_log_fd, qira_log_fd_);
++
++  // check if this one has a parent and recurse here
++  // BUG: FD ISSUE!
++  QIRA_DEBUG("parent is %d with first_change %d\n", plogstate.parent_id, plogstate.first_changelist_number);
++  if (plogstate.parent_id != -1) {
++    run_QIRA_log(env, plogstate.parent_id, plogstate.first_changelist_number);
++  }
++
++  int count = run_QIRA_log_from_fd(env, qira_log_fd, to_change);
++
++  close(qira_log_fd);
++
++  printf("+++ REPLAY %d DONE to %d with entry count %d\n", this_id, to_change, count);
++}
++
++bool is_filtered_address(target_ulong pc, bool ignore_gatetrace);
++bool is_filtered_address(target_ulong pc, bool ignore_gatetrace) {
++  // to remove the warning
++  uint64_t bpc = (uint64_t)pc;
++
++  // do this check before the tracelibraries one
++  if (unlikely(GLOBAL_gatetrace) && !ignore_gatetrace) {
++    if (GLOBAL_gatetrace == bpc) GLOBAL_gatetrace = 0;
++    else return true;
++  }
++
++  // TODO(geohot): FIX THIS!, filter anything that isn't the user binary and not dynamic
++  if (unlikely(GLOBAL_tracelibraries)) {
++    return false;
++  } else {
++    return is_library_addr(pc);
++    // return ((bpc > 0x80000000 && bpc < 0xf6800000) || bpc >= 0x100000000);
++  }
++}
++
++void real_target_disas(FILE *out, CPUState *env, target_ulong code, target_ulong size, int flags);
++void target_disas(FILE *out, CPUState *env, target_ulong code, target_ulong size, int flags) {
++  OPEN_GLOBAL_ASM_FILE
++
++  if (is_filtered_address(code, true)) return;
++
++  flock(fileno(GLOBAL_asm_file), LOCK_EX);
++  real_target_disas(GLOBAL_asm_file, env, code, size, flags);
++  flock(fileno(GLOBAL_asm_file), LOCK_UN);
++
++  fflush(GLOBAL_asm_file);
++}
++
++
++int GLOBAL_last_was_syscall = 0;
++uint32_t GLOBAL_last_fork_change = -1;
++target_long last_pc = 0;
++
++void write_out_base(CPUArchState *env, int id);
++
++void write_out_base(CPUArchState *env, int id) {
++#ifdef QEMU_USER
++  CPUState *cpu = ENV_GET_CPU(env);
++  TaskState *ts = (TaskState *)cpu->opaque;
++
++  char fn[PATH_MAX];
++  char envfn[PATH_MAX];
++
++  sprintf(envfn, "/tmp/qira_logs/%d_env", id);
++  FILE *envf = fopen(envfn, "wb");
++
++  // could still be wrong, clipping on env vars
++  target_ulong ss = ts->info->start_stack;
++  target_ulong se = (ts->info->arg_end + (TARGET_PAGE_SIZE - 1)) & TARGET_PAGE_MASK;
++
++  /*while (h2g_valid(g2h(se))) {
++    printf("%x\n", g2h(se));
++    fflush(stdout);
++    se += TARGET_PAGE_SIZE;
++  }*/
++
++  //target_ulong ss = ts->info->arg_start;
++  //target_ulong se = ts->info->arg_end;
++
++  fwrite(g2h(ss), 1, se-ss, envf);
++  fclose(envf);
++
++  sprintf(fn, "/tmp/qira_logs/%d_base", id);
++  FILE *f = fopen(fn, "w");
++
++
++  // code copied from linux-user/syscall.c
++  FILE *maps = fopen("/proc/self/maps", "r");
++  char *line = NULL;
++  size_t len = 0;
++  while (getline(&line, &len, maps) != -1) {
++    int fields, dev_maj, dev_min, inode;
++    uint64_t min, max, offset;
++    char flag_r, flag_w, flag_x, flag_p;
++    char path[512] = "";
++    fields = sscanf(line, "%"PRIx64"-%"PRIx64" %c%c%c%c %"PRIx64" %x:%x %d"
++                    " %512s", &min, &max, &flag_r, &flag_w, &flag_x,
++                    &flag_p, &offset, &dev_maj, &dev_min, &inode, path);
++    if ((fields < 10) || (fields > 11)) { continue; }
++
++    if (h2g_valid(min) && h2g_valid(max) && strlen(path) && flag_w == '-') {
++      fprintf(f, TARGET_ABI_FMT_lx "-" TARGET_ABI_FMT_lx " %"PRIx64" %s\n", h2g(min), h2g(max), offset, path);
++      //printf("%p - %p -- %s", h2g(min), h2g(max), line);
++      //fflush(stdout);
++    }
++
++    /*printf("%s", line);
++    fflush(stdout);*/
++  }
++  fclose(maps);
++
++  // env
++  fprintf(f, TARGET_ABI_FMT_lx "-" TARGET_ABI_FMT_lx " %"PRIx64" %s\n", ss, se, (uint64_t)0, envfn);
++
++  fclose(f);
++#endif
++}
++
++/* Interpret pseudo code in tb. */
++uintptr_t tcg_qemu_tb_trace(CPUArchState *env, uint8_t *tb_ptr)
++{
++#ifdef QIRA_TRACKING
++    CPUState *cpu = ENV_GET_CPU(env);
++    TranslationBlock *tb = cpu->current_tb;
++    //TaskState *ts = (TaskState *)cpu->opaque;
++    //fprintf(stderr, "TRACE[0x%08ulx]\n", tb->pc);
++
++    if (unlikely(GLOBAL_QIRA_did_init == 0)) {
++      // get next id
++      if (GLOBAL_id == -1) { GLOBAL_id = get_next_id(); }
++
++      // these are the base libraries we load
++      write_out_base(env, GLOBAL_id);
++
++      init_QIRA(env, GLOBAL_id);
++
++      // these three arguments (parent_id, start_clnum, id) must be passed into QIRA
++      // this now runs after init_QIRA
++      if (GLOBAL_parent_id != -1) {
++        run_QIRA_log(env, GLOBAL_parent_id, GLOBAL_start_clnum);
++        run_QIRA_mods(env, GLOBAL_id);
++      }
++
++      return 0;
++    }
++
++    if (unlikely(GLOBAL_logstate->this_pid != getpid())) {
++      GLOBAL_start_clnum = GLOBAL_last_fork_change + 1;
++      GLOBAL_parent_id = GLOBAL_id;
++
++      // BUG: race condition
++      GLOBAL_id = get_next_id();
++
++      // this fixes the PID
++      init_QIRA(env, GLOBAL_id);
++    }
++
++    // set this every time, it's not in shmem
++    GLOBAL_last_fork_change = GLOBAL_logstate->changelist_number;
++
++    if (GLOBAL_last_was_syscall) {
++      #ifdef R_EAX
++        add_change((void *)&env->regs[R_EAX] - (void *)env, env->regs[R_EAX], IS_WRITE | (sizeof(target_ulong)<<3));
++      #endif
++      #ifdef TARGET_ARM
++        //first register is 0 from enum
++        add_change((void *)&env->regs[0] - (void *)env, env->regs[0], IS_WRITE | (sizeof(target_ulong)<<3));
++      #endif
++      GLOBAL_last_was_syscall = 0;
++    }
++
++    if (is_filtered_address(tb->pc, false)) {
++      GLOBAL_logstate->is_filtered = 1;
++    } else {
++      if (GLOBAL_logstate->is_filtered == 1) {
++        commit_pending_changes();
++        GLOBAL_logstate->is_filtered = 0;
++      }
++      GLOBAL_logstate->changelist_number++;
++      add_change(tb->pc, tb->size, IS_START);
++    }
++
++
++    QIRA_DEBUG("set changelist %d at %x(%d)\n", GLOBAL_logstate->changelist_number, tb->pc, tb->size);
++#endif
++
++    long tcg_temps[CPU_TEMP_BUF_NLONGS];
++    uintptr_t sp_value = (uintptr_t)(tcg_temps + CPU_TEMP_BUF_NLONGS);
++    uintptr_t next_tb = 0;
++
++    tci_reg[T_TCG_AREG0] = (tcg_target_ulong)env;
++    tci_reg[T_TCG_REG_CALL_STACK] = sp_value;
++    assert(tb_ptr);
++
++    for (;;) {
++        TCGOpcode opc = tb_ptr[0];
++        printf("exec : %d\n", opc);
++#if !defined(NDEBUG)
++        uint8_t op_size = tb_ptr[1];
++        uint8_t *old_code_ptr = tb_ptr;
++#endif
++        tcg_target_ulong t0;
++        tcg_target_ulong t1;
++        tcg_target_ulong t2;
++        tcg_target_ulong a0,a1,a2,a3;
++        tcg_target_ulong label;
++        TCGCond condition;
++        target_ulong taddr;
++        uint8_t tmp8;
++        uint16_t tmp16;
++        uint32_t tmp32;
++        uint64_t tmp64;
++#if T_TCG_TARGET_REG_BITS == 32
++        uint64_t v64;
++#endif
++        TCGMemOpIdx oi;
++
++        /* Skip opcode and size entry. */
++        tb_ptr += 2;
++
++        switch (opc) {
++        case INDEX_op_call:
++            t0 = tci_read_ri(&tb_ptr);
++            a0 = tci_read_reg(T_TCG_REG_R0);
++            a1 = tci_read_reg(T_TCG_REG_R1);
++            a2 = tci_read_reg(T_TCG_REG_R2);
++            a3 = tci_read_reg(T_TCG_REG_R3);
++            //printf("op_call: %X\n", t0);
++            // helper_function raise_interrupt, load_seg
++#ifdef R_EAX
++            struct change *a = NULL;
++
++            if ((void*)t0 == helper_load_seg) {
++              if (GLOBAL_logstate->is_filtered == 1) {
++                commit_pending_changes();
++              }
++              a = track_syscall_begin(env, FAKE_SYSCALL_LOADSEG);
++              a->data = a1<<32 | a2;
++              //printf("LOAD SEG %x %x %x %x\n", a0, a1, a2, a3);
++            } else if ((void*)t0 == helper_raise_interrupt) {
++              if (GLOBAL_logstate->is_filtered == 1) {
++                commit_pending_changes();
++                // syscalls always get a change?
++                /*GLOBAL_logstate->changelist_number++;
++                add_change(tb->pc, tb->size, IS_START);*/
++              }
++              a = track_syscall_begin(env, env->regs[R_EAX]);
++              GLOBAL_last_was_syscall = 1;
++            }
++#endif
++#ifdef TARGET_ARM
++            struct change *a = NULL;
++            if ((void*)t0 == helper_exception_with_syndrome) {
++              if (GLOBAL_logstate->is_filtered == 1) {
++                commit_pending_changes();
++              }
++              a = track_syscall_begin(env, env->regs[0]);
++              GLOBAL_last_was_syscall = 1;
++            }
++#endif
++#ifdef TARGET_MIPS
++            struct change *a = NULL;
++            if ((void*)t0 == helper_raise_exception && a1 == EXCP_SYSCALL) {
++              if (GLOBAL_logstate->is_filtered == 1) {
++                commit_pending_changes();
++              }
++              a = track_syscall_begin(env, env->active_tc.gpr[2]);
++              GLOBAL_last_was_syscall = 1;
++            }
++#endif
++
++#if T_TCG_TARGET_REG_BITS == 32
++            tmp64 = ((helper_function)t0)(a0,a1,a2,a3,
++                                          tci_read_reg(T_TCG_REG_R5),
++                                          tci_read_reg(T_TCG_REG_R6),
++                                          tci_read_reg(T_TCG_REG_R7),
++                                          tci_read_reg(T_TCG_REG_R8),
++                                          tci_read_reg(T_TCG_REG_R9),
++                                          tci_read_reg(T_TCG_REG_R10));
++            tci_write_reg(T_TCG_REG_R0, tmp64);
++            tci_write_reg(T_TCG_REG_R1, tmp64 >> 32);
++#else
++            tmp64 = ((helper_function)t0)(a0,a1,a2,a3,
++                                          tci_read_reg(T_TCG_REG_R5));
++            tci_write_reg(T_TCG_REG_R0, tmp64);
++#endif
++            break;
++        case INDEX_op_br:
++            label = tci_read_label(&tb_ptr);
++            assert(tb_ptr == old_code_ptr + op_size);
++            tb_ptr = (uint8_t *)label;
++            continue;
++        case INDEX_op_setcond_i32:
++            t0 = *tb_ptr++;
++            t1 = tci_read_r32(&tb_ptr);
++            t2 = tci_read_ri32(&tb_ptr);
++            condition = *tb_ptr++;
++            tci_write_reg32(t0, tci_compare32(t1, t2, condition));
++            break;
++#if T_TCG_TARGET_REG_BITS == 32
++        case INDEX_op_setcond2_i32:
++            t0 = *tb_ptr++;
++            tmp64 = tci_read_r64(&tb_ptr);
++            v64 = tci_read_ri64(&tb_ptr);
++            condition = *tb_ptr++;
++            tci_write_reg32(t0, tci_compare64(tmp64, v64, condition));
++            break;
++#elif T_TCG_TARGET_REG_BITS == 64
++        case INDEX_op_setcond_i64:
++            t0 = *tb_ptr++;
++            t1 = tci_read_r64(&tb_ptr);
++            t2 = tci_read_ri64(&tb_ptr);
++            condition = *tb_ptr++;
++            tci_write_reg64(t0, tci_compare64(t1, t2, condition));
++            break;
++#endif
++        case INDEX_op_mov_i32:
++            t0 = *tb_ptr++;
++            t1 = tci_read_r32(&tb_ptr);
++            tci_write_reg32(t0, t1);
++            break;
++        case INDEX_op_movi_i32:
++            t0 = *tb_ptr++;
++            t1 = tci_read_i32(&tb_ptr);
++            tci_write_reg32(t0, t1);
++            break;
++
++            /* Load/store operations (32 bit). */
++
++        case INDEX_op_ld8u_i32:
++            t0 = *tb_ptr++;
++            t1 = tci_read_r(&tb_ptr);
++            t2 = tci_read_s32(&tb_ptr);
++            track_read(t1, t2, *(uint8_t *)(t1 + t2), 32);
++            tci_write_reg8(t0, *(uint8_t *)(t1 + t2));
++            break;
++        case INDEX_op_ld8s_i32:
++        case INDEX_op_ld16u_i32:
++            TODO();
++            break;
++        case INDEX_op_ld16s_i32:
++            TODO();
++            break;
++        case INDEX_op_ld_i32:
++            t0 = *tb_ptr++;
++            t1 = tci_read_r(&tb_ptr);
++            t2 = tci_read_s32(&tb_ptr);
++            track_read(t1, t2, *(uint32_t *)(t1 + t2), 32);
++            tci_write_reg32(t0, *(uint32_t *)(t1 + t2));
++            break;
++        case INDEX_op_st8_i32:
++            t0 = tci_read_r8(&tb_ptr);
++            t1 = tci_read_r(&tb_ptr);
++            t2 = tci_read_s32(&tb_ptr);
++            track_write(t1, t2, t0, 32);
++            *(uint8_t *)(t1 + t2) = t0;
++            break;
++        case INDEX_op_st16_i32:
++            t0 = tci_read_r16(&tb_ptr);
++            t1 = tci_read_r(&tb_ptr);
++            t2 = tci_read_s32(&tb_ptr);
++            track_write(t1, t2, t0, 32);
++            *(uint16_t *)(t1 + t2) = t0;
++            break;
++        case INDEX_op_st_i32:
++            t0 = tci_read_r32(&tb_ptr);
++            t1 = tci_read_r(&tb_ptr);
++            t2 = tci_read_s32(&tb_ptr);
++            assert(t1 != sp_value || (int32_t)t2 < 0);
++            track_write(t1, t2, t0, 32);
++            *(uint32_t *)(t1 + t2) = t0;
++            break;
++
++            /* Arithmetic operations (32 bit). */
++
++        case INDEX_op_add_i32:
++            t0 = *tb_ptr++;
++            t1 = tci_read_ri32(&tb_ptr);
++            t2 = tci_read_ri32(&tb_ptr);
++            tci_write_reg32(t0, t1 + t2);
++            break;
++        case INDEX_op_sub_i32:
++            t0 = *tb_ptr++;
++            t1 = tci_read_ri32(&tb_ptr);
++            t2 = tci_read_ri32(&tb_ptr);
++            tci_write_reg32(t0, t1 - t2);
++            break;
++        case INDEX_op_mul_i32:
++            t0 = *tb_ptr++;
++            t1 = tci_read_ri32(&tb_ptr);
++            t2 = tci_read_ri32(&tb_ptr);
++            tci_write_reg32(t0, t1 * t2);
++            break;
++#if T_TCG_TARGET_HAS_div_i32
++        case INDEX_op_div_i32:
++            t0 = *tb_ptr++;
++            t1 = tci_read_ri32(&tb_ptr);
++            t2 = tci_read_ri32(&tb_ptr);
++            tci_write_reg32(t0, (int32_t)t1 / (int32_t)t2);
++            break;
++        case INDEX_op_divu_i32:
++            t0 = *tb_ptr++;
++            t1 = tci_read_ri32(&tb_ptr);
++            t2 = tci_read_ri32(&tb_ptr);
++            tci_write_reg32(t0, t1 / t2);
++            break;
++        case INDEX_op_rem_i32:
++            t0 = *tb_ptr++;
++            t1 = tci_read_ri32(&tb_ptr);
++            t2 = tci_read_ri32(&tb_ptr);
++            tci_write_reg32(t0, (int32_t)t1 % (int32_t)t2);
++            break;
++        case INDEX_op_remu_i32:
++            t0 = *tb_ptr++;
++            t1 = tci_read_ri32(&tb_ptr);
++            t2 = tci_read_ri32(&tb_ptr);
++            tci_write_reg32(t0, t1 % t2);
++            break;
++#elif T_TCG_TARGET_HAS_div2_i32
++        case INDEX_op_div2_i32:
++        case INDEX_op_divu2_i32:
++            TODO();
++            break;
++#endif
++        case INDEX_op_and_i32:
++            t0 = *tb_ptr++;
++            t1 = tci_read_ri32(&tb_ptr);
++            t2 = tci_read_ri32(&tb_ptr);
++            tci_write_reg32(t0, t1 & t2);
++            break;
++        case INDEX_op_or_i32:
++            t0 = *tb_ptr++;
++            t1 = tci_read_ri32(&tb_ptr);
++            t2 = tci_read_ri32(&tb_ptr);
++            tci_write_reg32(t0, t1 | t2);
++            break;
++        case INDEX_op_xor_i32:
++            t0 = *tb_ptr++;
++            t1 = tci_read_ri32(&tb_ptr);
++            t2 = tci_read_ri32(&tb_ptr);
++            tci_write_reg32(t0, t1 ^ t2);
++            break;
++
++            /* Shift/rotate operations (32 bit). */
++
++        case INDEX_op_shl_i32:
++            t0 = *tb_ptr++;
++            t1 = tci_read_ri32(&tb_ptr);
++            t2 = tci_read_ri32(&tb_ptr);
++            tci_write_reg32(t0, t1 << (t2 & 31));
++            break;
++        case INDEX_op_shr_i32:
++            t0 = *tb_ptr++;
++            t1 = tci_read_ri32(&tb_ptr);
++            t2 = tci_read_ri32(&tb_ptr);
++            tci_write_reg32(t0, t1 >> (t2 & 31));
++            break;
++        case INDEX_op_sar_i32:
++            t0 = *tb_ptr++;
++            t1 = tci_read_ri32(&tb_ptr);
++            t2 = tci_read_ri32(&tb_ptr);
++            tci_write_reg32(t0, ((int32_t)t1 >> (t2 & 31)));
++            break;
++#if T_TCG_TARGET_HAS_rot_i32
++        case INDEX_op_rotl_i32:
++            t0 = *tb_ptr++;
++            t1 = tci_read_ri32(&tb_ptr);
++            t2 = tci_read_ri32(&tb_ptr);
++            tci_write_reg32(t0, rol32(t1, t2 & 31));
++            break;
++        case INDEX_op_rotr_i32:
++            t0 = *tb_ptr++;
++            t1 = tci_read_ri32(&tb_ptr);
++            t2 = tci_read_ri32(&tb_ptr);
++            tci_write_reg32(t0, ror32(t1, t2 & 31));
++            break;
++#endif
++#if T_TCG_TARGET_HAS_deposit_i32
++        case INDEX_op_deposit_i32:
++            t0 = *tb_ptr++;
++            t1 = tci_read_r32(&tb_ptr);
++            t2 = tci_read_r32(&tb_ptr);
++            tmp16 = *tb_ptr++;
++            tmp8 = *tb_ptr++;
++            tmp32 = (((1 << tmp8) - 1) << tmp16);
++            tci_write_reg32(t0, (t1 & ~tmp32) | ((t2 << tmp16) & tmp32));
++            break;
++#endif
++        case INDEX_op_brcond_i32:
++            t0 = tci_read_r32(&tb_ptr);
++            t1 = tci_read_ri32(&tb_ptr);
++            condition = *tb_ptr++;
++            label = tci_read_label(&tb_ptr);
++            if (tci_compare32(t0, t1, condition)) {
++                assert(tb_ptr == old_code_ptr + op_size);
++                tb_ptr = (uint8_t *)label;
++                continue;
++            }
++            break;
++#if T_TCG_TARGET_REG_BITS == 32
++        case INDEX_op_add2_i32:
++            t0 = *tb_ptr++;
++            t1 = *tb_ptr++;
++            tmp64 = tci_read_r64(&tb_ptr);
++            tmp64 += tci_read_r64(&tb_ptr);
++            tci_write_reg64(t1, t0, tmp64);
++            break;
++        case INDEX_op_sub2_i32:
++            t0 = *tb_ptr++;
++            t1 = *tb_ptr++;
++            tmp64 = tci_read_r64(&tb_ptr);
++            tmp64 -= tci_read_r64(&tb_ptr);
++            tci_write_reg64(t1, t0, tmp64);
++            break;
++        case INDEX_op_brcond2_i32:
++            tmp64 = tci_read_r64(&tb_ptr);
++            v64 = tci_read_ri64(&tb_ptr);
++            condition = *tb_ptr++;
++            label = tci_read_label(&tb_ptr);
++            if (tci_compare64(tmp64, v64, condition)) {
++                assert(tb_ptr == old_code_ptr + op_size);
++                tb_ptr = (uint8_t *)label;
++                continue;
++            }
++            break;
++        case INDEX_op_mulu2_i32:
++            t0 = *tb_ptr++;
++            t1 = *tb_ptr++;
++            t2 = tci_read_r32(&tb_ptr);
++            tmp64 = tci_read_r32(&tb_ptr);
++            tci_write_reg64(t1, t0, t2 * tmp64);
++            break;
++#endif /* T_TCG_TARGET_REG_BITS == 32 */
++#if T_TCG_TARGET_HAS_ext8s_i32
++        case INDEX_op_ext8s_i32:
++            t0 = *tb_ptr++;
++            t1 = tci_read_r8s(&tb_ptr);
++            tci_write_reg32(t0, t1);
++            break;
++#endif
++#if T_TCG_TARGET_HAS_ext16s_i32
++        case INDEX_op_ext16s_i32:
++            t0 = *tb_ptr++;
++            t1 = tci_read_r16s(&tb_ptr);
++            tci_write_reg32(t0, t1);
++            break;
++#endif
++#if T_TCG_TARGET_HAS_ext8u_i32
++        case INDEX_op_ext8u_i32:
++            t0 = *tb_ptr++;
++            t1 = tci_read_r8(&tb_ptr);
++            tci_write_reg32(t0, t1);
++            break;
++#endif
++#if T_TCG_TARGET_HAS_ext16u_i32
++        case INDEX_op_ext16u_i32:
++            t0 = *tb_ptr++;
++            t1 = tci_read_r16(&tb_ptr);
++            tci_write_reg32(t0, t1);
++            break;
++#endif
++#if T_TCG_TARGET_HAS_bswap16_i32
++        case INDEX_op_bswap16_i32:
++            t0 = *tb_ptr++;
++            t1 = tci_read_r16(&tb_ptr);
++            tci_write_reg32(t0, bswap16(t1));
++            break;
++#endif
++#if T_TCG_TARGET_HAS_bswap32_i32
++        case INDEX_op_bswap32_i32:
++            t0 = *tb_ptr++;
++            t1 = tci_read_r32(&tb_ptr);
++            tci_write_reg32(t0, bswap32(t1));
++            break;
++#endif
++#if T_TCG_TARGET_HAS_not_i32
++        case INDEX_op_not_i32:
++            t0 = *tb_ptr++;
++            t1 = tci_read_r32(&tb_ptr);
++            tci_write_reg32(t0, ~t1);
++            break;
++#endif
++#if T_TCG_TARGET_HAS_neg_i32
++        case INDEX_op_neg_i32:
++            t0 = *tb_ptr++;
++            t1 = tci_read_r32(&tb_ptr);
++            tci_write_reg32(t0, -t1);
++            break;
++#endif
++#if T_TCG_TARGET_REG_BITS == 64
++        case INDEX_op_mov_i64:
++            t0 = *tb_ptr++;
++            t1 = tci_read_r64(&tb_ptr);
++            tci_write_reg64(t0, t1);
++            break;
++        case INDEX_op_movi_i64:
++            t0 = *tb_ptr++;
++            t1 = tci_read_i64(&tb_ptr);
++            tci_write_reg64(t0, t1);
++            break;
++
++            /* Load/store operations (64 bit). */
++
++        case INDEX_op_ld8u_i64:
++            t0 = *tb_ptr++;
++            t1 = tci_read_r(&tb_ptr);
++            t2 = tci_read_s32(&tb_ptr);
++            track_read(t1, t2, *(uint8_t *)(t1 + t2), 8);
++            tci_write_reg8(t0, *(uint8_t *)(t1 + t2));
++            break;
++        case INDEX_op_ld8s_i64:
++        case INDEX_op_ld16u_i64:
++        case INDEX_op_ld16s_i64:
++            TODO();
++            break;
++        case INDEX_op_ld32u_i64:
++            t0 = *tb_ptr++;
++            t1 = tci_read_r(&tb_ptr);
++            t2 = tci_read_s32(&tb_ptr);
++            track_read(t1, t2, *(uint32_t *)(t1 + t2), 32);
++            tci_write_reg32(t0, *(uint32_t *)(t1 + t2));
++            break;
++        case INDEX_op_ld32s_i64:
++            t0 = *tb_ptr++;
++            t1 = tci_read_r(&tb_ptr);
++            t2 = tci_read_s32(&tb_ptr);
++            track_read(t1, t2, *(int32_t *)(t1 + t2), 32);
++            tci_write_reg32s(t0, *(int32_t *)(t1 + t2));
++            break;
++        case INDEX_op_ld_i64:
++            t0 = *tb_ptr++;
++            t1 = tci_read_r(&tb_ptr);
++            t2 = tci_read_s32(&tb_ptr);
++            track_read(t1, t2, *(uint64_t *)(t1 + t2), 64);
++            tci_write_reg64(t0, *(uint64_t *)(t1 + t2));
++            break;
++        case INDEX_op_st8_i64:
++            t0 = tci_read_r8(&tb_ptr);
++            t1 = tci_read_r(&tb_ptr);
++            t2 = tci_read_s32(&tb_ptr);
++            track_write(t1, t2, t0, 64);
++            *(uint8_t *)(t1 + t2) = t0;
++            break;
++        case INDEX_op_st16_i64:
++            t0 = tci_read_r16(&tb_ptr);
++            t1 = tci_read_r(&tb_ptr);
++            t2 = tci_read_s32(&tb_ptr);
++            track_write(t1, t2, t0, 64);
++            *(uint16_t *)(t1 + t2) = t0;
++            break;
++        case INDEX_op_st32_i64:
++            t0 = tci_read_r32(&tb_ptr);
++            t1 = tci_read_r(&tb_ptr);
++            t2 = tci_read_s32(&tb_ptr);
++            track_write(t1, t2, t0, 64);
++            *(uint32_t *)(t1 + t2) = t0;
++            break;
++        case INDEX_op_st_i64:
++            t0 = tci_read_r64(&tb_ptr);
++            t1 = tci_read_r(&tb_ptr);
++            t2 = tci_read_s32(&tb_ptr);
++            assert(t1 != sp_value || (int32_t)t2 < 0);
++            track_write(t1, t2, t0, 64);
++            *(uint64_t *)(t1 + t2) = t0;
++            break;
++
++            /* Arithmetic operations (64 bit). */
++
++        case INDEX_op_add_i64:
++            t0 = *tb_ptr++;
++            t1 = tci_read_ri64(&tb_ptr);
++            t2 = tci_read_ri64(&tb_ptr);
++            tci_write_reg64(t0, t1 + t2);
++            break;
++        case INDEX_op_sub_i64:
++            t0 = *tb_ptr++;
++            t1 = tci_read_ri64(&tb_ptr);
++            t2 = tci_read_ri64(&tb_ptr);
++            tci_write_reg64(t0, t1 - t2);
++            break;
++        case INDEX_op_mul_i64:
++            t0 = *tb_ptr++;
++            t1 = tci_read_ri64(&tb_ptr);
++            t2 = tci_read_ri64(&tb_ptr);
++            tci_write_reg64(t0, t1 * t2);
++            break;
++#if T_TCG_TARGET_HAS_div_i64
++        case INDEX_op_div_i64:
++        case INDEX_op_divu_i64:
++        case INDEX_op_rem_i64:
++        case INDEX_op_remu_i64:
++            TODO();
++            break;
++#elif T_TCG_TARGET_HAS_div2_i64
++        case INDEX_op_div2_i64:
++        case INDEX_op_divu2_i64:
++            TODO();
++            break;
++#endif
++        case INDEX_op_and_i64:
++            t0 = *tb_ptr++;
++            t1 = tci_read_ri64(&tb_ptr);
++            t2 = tci_read_ri64(&tb_ptr);
++            tci_write_reg64(t0, t1 & t2);
++            break;
++        case INDEX_op_or_i64:
++            t0 = *tb_ptr++;
++            t1 = tci_read_ri64(&tb_ptr);
++            t2 = tci_read_ri64(&tb_ptr);
++            tci_write_reg64(t0, t1 | t2);
++            break;
++        case INDEX_op_xor_i64:
++            t0 = *tb_ptr++;
++            t1 = tci_read_ri64(&tb_ptr);
++            t2 = tci_read_ri64(&tb_ptr);
++            tci_write_reg64(t0, t1 ^ t2);
++            break;
++
++            /* Shift/rotate operations (64 bit). */
++
++        case INDEX_op_shl_i64:
++            t0 = *tb_ptr++;
++            t1 = tci_read_ri64(&tb_ptr);
++            t2 = tci_read_ri64(&tb_ptr);
++            tci_write_reg64(t0, t1 << (t2 & 63));
++            break;
++        case INDEX_op_shr_i64:
++            t0 = *tb_ptr++;
++            t1 = tci_read_ri64(&tb_ptr);
++            t2 = tci_read_ri64(&tb_ptr);
++            tci_write_reg64(t0, t1 >> (t2 & 63));
++            break;
++        case INDEX_op_sar_i64:
++            t0 = *tb_ptr++;
++            t1 = tci_read_ri64(&tb_ptr);
++            t2 = tci_read_ri64(&tb_ptr);
++            tci_write_reg64(t0, ((int64_t)t1 >> (t2 & 63)));
++            break;
++#if T_TCG_TARGET_HAS_rot_i64
++        case INDEX_op_rotl_i64:
++            t0 = *tb_ptr++;
++            t1 = tci_read_ri64(&tb_ptr);
++            t2 = tci_read_ri64(&tb_ptr);
++            tci_write_reg64(t0, rol64(t1, t2 & 63));
++            break;
++        case INDEX_op_rotr_i64:
++            t0 = *tb_ptr++;
++            t1 = tci_read_ri64(&tb_ptr);
++            t2 = tci_read_ri64(&tb_ptr);
++            tci_write_reg64(t0, ror64(t1, t2 & 63));
++            break;
++#endif
++#if T_TCG_TARGET_HAS_deposit_i64
++        case INDEX_op_deposit_i64:
++            t0 = *tb_ptr++;
++            t1 = tci_read_r64(&tb_ptr);
++            t2 = tci_read_r64(&tb_ptr);
++            tmp16 = *tb_ptr++;
++            tmp8 = *tb_ptr++;
++            tmp64 = (((1ULL << tmp8) - 1) << tmp16);
++            tci_write_reg64(t0, (t1 & ~tmp64) | ((t2 << tmp16) & tmp64));
++            break;
++#endif
++        case INDEX_op_brcond_i64:
++            t0 = tci_read_r64(&tb_ptr);
++            t1 = tci_read_ri64(&tb_ptr);
++            condition = *tb_ptr++;
++            label = tci_read_label(&tb_ptr);
++            if (tci_compare64(t0, t1, condition)) {
++                assert(tb_ptr == old_code_ptr + op_size);
++                tb_ptr = (uint8_t *)label;
++                continue;
++            }
++            break;
++#if T_TCG_TARGET_HAS_ext8u_i64
++        case INDEX_op_ext8u_i64:
++            t0 = *tb_ptr++;
++            t1 = tci_read_r8(&tb_ptr);
++            tci_write_reg64(t0, t1);
++            break;
++#endif
++#if T_TCG_TARGET_HAS_ext8s_i64
++        case INDEX_op_ext8s_i64:
++            t0 = *tb_ptr++;
++            t1 = tci_read_r8s(&tb_ptr);
++            tci_write_reg64(t0, t1);
++            break;
++#endif
++#if T_TCG_TARGET_HAS_ext16s_i64
++        case INDEX_op_ext16s_i64:
++            t0 = *tb_ptr++;
++            t1 = tci_read_r16s(&tb_ptr);
++            tci_write_reg64(t0, t1);
++            break;
++#endif
++#if T_TCG_TARGET_HAS_ext16u_i64
++        case INDEX_op_ext16u_i64:
++            t0 = *tb_ptr++;
++            t1 = tci_read_r16(&tb_ptr);
++            tci_write_reg64(t0, t1);
++            break;
++#endif
++#if T_TCG_TARGET_HAS_ext32s_i64
++        case INDEX_op_ext32s_i64:
++#endif
++        case INDEX_op_ext_i32_i64:
++            t0 = *tb_ptr++;
++            t1 = tci_read_r32s(&tb_ptr);
++            tci_write_reg64(t0, t1);
++            break;
++#if T_TCG_TARGET_HAS_ext32u_i64
++        case INDEX_op_ext32u_i64:
++#endif
++        case INDEX_op_extu_i32_i64:
++            t0 = *tb_ptr++;
++            t1 = tci_read_r32(&tb_ptr);
++            tci_write_reg64(t0, t1);
++            break;
++#if T_TCG_TARGET_HAS_bswap16_i64
++        case INDEX_op_bswap16_i64:
++            TODO();
++            t0 = *tb_ptr++;
++            t1 = tci_read_r16(&tb_ptr);
++            tci_write_reg64(t0, bswap16(t1));
++            break;
++#endif
++#if T_TCG_TARGET_HAS_bswap32_i64
++        case INDEX_op_bswap32_i64:
++            t0 = *tb_ptr++;
++            t1 = tci_read_r32(&tb_ptr);
++            tci_write_reg64(t0, bswap32(t1));
++            break;
++#endif
++#if T_TCG_TARGET_HAS_bswap64_i64
++        case INDEX_op_bswap64_i64:
++            t0 = *tb_ptr++;
++            t1 = tci_read_r64(&tb_ptr);
++            tci_write_reg64(t0, bswap64(t1));
++            break;
++#endif
++#if T_TCG_TARGET_HAS_not_i64
++        case INDEX_op_not_i64:
++            t0 = *tb_ptr++;
++            t1 = tci_read_r64(&tb_ptr);
++            tci_write_reg64(t0, ~t1);
++            break;
++#endif
++#if T_TCG_TARGET_HAS_neg_i64
++        case INDEX_op_neg_i64:
++            t0 = *tb_ptr++;
++            t1 = tci_read_r64(&tb_ptr);
++            tci_write_reg64(t0, -t1);
++            break;
++#endif
++#endif /* T_TCG_TARGET_REG_BITS == 64 */
++
++            /* QEMU specific operations. */
++
++        case INDEX_op_exit_tb:
++            next_tb = *(uint64_t *)tb_ptr;
++            goto exit;
++            break;
++        case INDEX_op_goto_tb:
++            t0 = tci_read_i32(&tb_ptr);
++            assert(tb_ptr == old_code_ptr + op_size);
++            //printf("goto_tb: %lx\n", t0);
++            tb_ptr += (int32_t)t0;
++            continue;
++        case INDEX_op_qemu_ld_i32:
++            t0 = *tb_ptr++;
++            taddr = tci_read_ulong(&tb_ptr);
++            oi = tci_read_i(&tb_ptr);
++            switch (get_memop(oi) & (MO_BSWAP | MO_SSIZE)) {
++            case MO_UB:
++                tmp32 = qemu_ld_ub;
++                break;
++            case MO_SB:
++                tmp32 = (int8_t)qemu_ld_ub;
++                break;
++            case MO_LEUW:
++                tmp32 = qemu_ld_leuw;
++                break;
++            case MO_LESW:
++                tmp32 = (int16_t)qemu_ld_leuw;
++                break;
++            case MO_LEUL:
++                tmp32 = qemu_ld_leul;
++                break;
++            case MO_BEUW:
++                tmp32 = qemu_ld_beuw;
++                break;
++            case MO_BESW:
++                tmp32 = (int16_t)qemu_ld_beuw;
++                break;
++            case MO_BEUL:
++                tmp32 = qemu_ld_beul;
++                break;
++            default:
++                tcg_abort();
++            }
++            tci_write_reg(t0, tmp32);
++            break;
++        case INDEX_op_qemu_ld_i64:
++            t0 = *tb_ptr++;
++            if (T_TCG_TARGET_REG_BITS == 32) {
++                t1 = *tb_ptr++;
++            }
++            taddr = tci_read_ulong(&tb_ptr);
++            oi = tci_read_i(&tb_ptr);
++            switch (get_memop(oi) & (MO_BSWAP | MO_SSIZE)) {
++            case MO_UB:
++                tmp64 = qemu_ld_ub;
++                break;
++            case MO_SB:
++                tmp64 = (int8_t)qemu_ld_ub;
++                break;
++            case MO_LEUW:
++                tmp64 = qemu_ld_leuw;
++                break;
++            case MO_LESW:
++                tmp64 = (int16_t)qemu_ld_leuw;
++                break;
++            case MO_LEUL:
++                tmp64 = qemu_ld_leul;
++                break;
++            case MO_LESL:
++                tmp64 = (int32_t)qemu_ld_leul;
++                break;
++            case MO_LEQ:
++                tmp64 = qemu_ld_leq;
++                break;
++            case MO_BEUW:
++                tmp64 = qemu_ld_beuw;
++                break;
++            case MO_BESW:
++                tmp64 = (int16_t)qemu_ld_beuw;
++                break;
++            case MO_BEUL:
++                tmp64 = qemu_ld_beul;
++                break;
++            case MO_BESL:
++                tmp64 = (int32_t)qemu_ld_beul;
++                break;
++            case MO_BEQ:
++                tmp64 = qemu_ld_beq;
++                break;
++            default:
++                tcg_abort();
++            }
++            tci_write_reg(t0, tmp64);
++            if (T_TCG_TARGET_REG_BITS == 32) {
++                tci_write_reg(t1, tmp64 >> 32);
++            }
++            break;
++        case INDEX_op_qemu_st_i32:
++            t0 = tci_read_r(&tb_ptr);
++            taddr = tci_read_ulong(&tb_ptr);
++            oi = tci_read_i(&tb_ptr);
++            switch (get_memop(oi) & (MO_BSWAP | MO_SIZE)) {
++            case MO_UB:
++                qemu_st_b(t0);
++                break;
++            case MO_LEUW:
++                qemu_st_lew(t0);
++                break;
++            case MO_LEUL:
++                qemu_st_lel(t0);
++                break;
++            case MO_BEUW:
++                qemu_st_bew(t0);
++                break;
++            case MO_BEUL:
++                qemu_st_bel(t0);
++                break;
++            default:
++                tcg_abort();
++            }
++            break;
++        case INDEX_op_qemu_st_i64:
++            tmp64 = tci_read_r64(&tb_ptr);
++            taddr = tci_read_ulong(&tb_ptr);
++            oi = tci_read_i(&tb_ptr);
++            switch (get_memop(oi) & (MO_BSWAP | MO_SIZE)) {
++            case MO_UB:
++                qemu_st_b(tmp64);
++                break;
++            case MO_LEUW:
++                qemu_st_lew(tmp64);
++                break;
++            case MO_LEUL:
++                qemu_st_lel(tmp64);
++                break;
++            case MO_LEQ:
++                qemu_st_leq(tmp64);
++                break;
++            case MO_BEUW:
++                qemu_st_bew(tmp64);
++                break;
++            case MO_BEUL:
++                qemu_st_bel(tmp64);
++                break;
++            case MO_BEQ:
++                qemu_st_beq(tmp64);
++                break;
++            default:
++                tcg_abort();
++            }
++            break;
++        default:
++            TODO();
++            break;
++        }
++        assert(tb_ptr == old_code_ptr + op_size);
++    }
++exit:
++#ifdef QIRA_TRACKING
++    // this fixes the jump instruction merging bug
++    // with the last_pc hack for ARM, might break some x86 reps
++    if (next_tb != 0 && last_pc != tb->pc) {
++      next_tb = 0;
++    }
++#endif
++    last_pc = tb->pc;
++    return next_tb;
++}
+--- ./qemu-2.5.1/tcg_tracer-target.c	1970-01-01 09:00:00.000000000 +0900
++++ ./qemu-2.5.1-patched/tcg_tracer-target.c	2016-08-20 18:47:05.945927294 +0900
+@@ -0,0 +1,895 @@
++/*
++ * Tiny Code Generator for Partial TCI
++ *
++ * Copyright (c) 2009, 2011 Stefan Weil 2016 Ren Kimura
++ *
++ * Permission is hereby granted, free of charge, to any person obtaining a copy
++ * of this software and associated documentation files (the "Software"), to deal
++ * in the Software without restriction, including without limitation the rights
++ * to use, copy, modify, merge, publish, distribute, sublicense, and/or sell
++ * copies of the Software, and to permit persons to whom the Software is
++ * furnished to do so, subject to the following conditions:
++ *
++ * The above copyright notice and this permission notice shall be included in
++ * all copies or substantial portions of the Software.
++ *
++ * THE SOFTWARE IS PROVIDED "AS IS", WITHOUT WARRANTY OF ANY KIND, EXPRESS OR
++ * IMPLIED, INCLUDING BUT NOT LIMITED TO THE WARRANTIES OF MERCHANTABILITY,
++ * FITNESS FOR A PARTICULAR PURPOSE AND NONINFRINGEMENT. IN NO EVENT SHALL
++ * THE AUTHORS OR COPYRIGHT HOLDERS BE LIABLE FOR ANY CLAIM, DAMAGES OR OTHER
++ * LIABILITY, WHETHER IN AN ACTION OF CONTRACT, TORT OR OTHERWISE, ARISING FROM,
++ * OUT OF OR IN CONNECTION WITH THE SOFTWARE OR THE USE OR OTHER DEALINGS IN
++ * THE SOFTWARE.
++ */
++#include "tcg/tcg.h"
++#include "tcg_tracer.h"
++
++#include "tcg-be-null.h"
++
++extern TCGRegSet tcg_target_available_regs[2];
++TCGRegSet tcg_target_call_clobber_regs;
++
++/* XXX: What happen? How qemu solved these linking problems? */
++extern void tcg_out8(TCGContext *s, uint8_t v);
++extern void tcg_out16(TCGContext *s, uint16_t v);
++extern void tcg_out32(TCGContext *s, uint32_t v);
++extern void tcg_out64(TCGContext *s, uint64_t v);
++extern void tcg_patch8(tcg_insn_unit *p, uint8_t v);
++extern void tcg_patch16(tcg_insn_unit *p, uint16_t v);
++extern void tcg_patch32(tcg_insn_unit *p, uint32_t v);
++extern void tcg_patch64(tcg_insn_unit *p, uint64_t v);
++
++
++/* TODO list:
++ * - See TODO comments in code.
++ */
++
++/* Marker for missing code. */
++#define TODO() \
++    do { \
++        fprintf(stderr, "TODO %s:%u: %s()\n", \
++                __FILE__, __LINE__, __func__); \
++        tcg_abort(); \
++    } while (0)
++
++/* Bitfield n...m (in 32 bit value). */
++#define BITS(n, m) (((0xffffffffU << (31 - n)) >> (31 - n + m)) << m)
++
++/* Macros used in tcg_target_op_defs. */
++#define R       "r"
++#define RI      "ri"
++#if T_TCG_TARGET_REG_BITS == 32
++# define R64    "r", "r"
++#else
++# define R64    "r"
++#endif
++#if TARGET_LONG_BITS > T_TCG_TARGET_REG_BITS
++# define L      "L", "L"
++# define S      "S", "S"
++#else
++# define L      "L"
++# define S      "S"
++#endif
++
++/* TODO: documentation. */
++static const TCGTargetOpDef tcg_target_op_defs[] = {
++    { INDEX_op_exit_tb, { NULL } },
++    { INDEX_op_goto_tb, { NULL } },
++    { INDEX_op_br, { NULL } },
++
++    { INDEX_op_ld8u_i32, { R, R } },
++    { INDEX_op_ld8s_i32, { R, R } },
++    { INDEX_op_ld16u_i32, { R, R } },
++    { INDEX_op_ld16s_i32, { R, R } },
++    { INDEX_op_ld_i32, { R, R } },
++    { INDEX_op_st8_i32, { R, R } },
++    { INDEX_op_st16_i32, { R, R } },
++    { INDEX_op_st_i32, { R, R } },
++
++    { INDEX_op_add_i32, { R, RI, RI } },
++    { INDEX_op_sub_i32, { R, RI, RI } },
++    { INDEX_op_mul_i32, { R, RI, RI } },
++#if T_TCG_TARGET_HAS_div_i32
++    { INDEX_op_div_i32, { R, R, R } },
++    { INDEX_op_divu_i32, { R, R, R } },
++    { INDEX_op_rem_i32, { R, R, R } },
++    { INDEX_op_remu_i32, { R, R, R } },
++#elif T_TCG_TARGET_HAS_div2_i32
++    { INDEX_op_div2_i32, { R, R, "0", "1", R } },
++    { INDEX_op_divu2_i32, { R, R, "0", "1", R } },
++#endif
++    /* TODO: Does R, RI, RI result in faster code than R, R, RI?
++       If both operands are constants, we can optimize. */
++    { INDEX_op_and_i32, { R, RI, RI } },
++#if T_TCG_TARGET_HAS_andc_i32
++    { INDEX_op_andc_i32, { R, RI, RI } },
++#endif
++#if T_TCG_TARGET_HAS_eqv_i32
++    { INDEX_op_eqv_i32, { R, RI, RI } },
++#endif
++#if T_TCG_TARGET_HAS_nand_i32
++    { INDEX_op_nand_i32, { R, RI, RI } },
++#endif
++#if T_TCG_TARGET_HAS_nor_i32
++    { INDEX_op_nor_i32, { R, RI, RI } },
++#endif
++    { INDEX_op_or_i32, { R, RI, RI } },
++#if T_TCG_TARGET_HAS_orc_i32
++    { INDEX_op_orc_i32, { R, RI, RI } },
++#endif
++    { INDEX_op_xor_i32, { R, RI, RI } },
++    { INDEX_op_shl_i32, { R, RI, RI } },
++    { INDEX_op_shr_i32, { R, RI, RI } },
++    { INDEX_op_sar_i32, { R, RI, RI } },
++#if T_TCG_TARGET_HAS_rot_i32
++    { INDEX_op_rotl_i32, { R, RI, RI } },
++    { INDEX_op_rotr_i32, { R, RI, RI } },
++#endif
++#if T_TCG_TARGET_HAS_deposit_i32
++    { INDEX_op_deposit_i32, { R, "0", R } },
++#endif
++
++    { INDEX_op_brcond_i32, { R, RI } },
++
++    { INDEX_op_setcond_i32, { R, R, RI } },
++#if T_TCG_TARGET_REG_BITS == 64
++    { INDEX_op_setcond_i64, { R, R, RI } },
++#endif /* T_TCG_TARGET_REG_BITS == 64 */
++
++#if T_TCG_TARGET_REG_BITS == 32
++    /* TODO: Support R, R, R, R, RI, RI? Will it be faster? */
++    { INDEX_op_add2_i32, { R, R, R, R, R, R } },
++    { INDEX_op_sub2_i32, { R, R, R, R, R, R } },
++    { INDEX_op_brcond2_i32, { R, R, RI, RI } },
++    { INDEX_op_mulu2_i32, { R, R, R, R } },
++    { INDEX_op_setcond2_i32, { R, R, R, RI, RI } },
++#endif
++
++#if T_TCG_TARGET_HAS_not_i32
++    { INDEX_op_not_i32, { R, R } },
++#endif
++#if T_TCG_TARGET_HAS_neg_i32
++    { INDEX_op_neg_i32, { R, R } },
++#endif
++
++#if T_TCG_TARGET_REG_BITS == 64
++    { INDEX_op_ld8u_i64, { R, R } },
++    { INDEX_op_ld8s_i64, { R, R } },
++    { INDEX_op_ld16u_i64, { R, R } },
++    { INDEX_op_ld16s_i64, { R, R } },
++    { INDEX_op_ld32u_i64, { R, R } },
++    { INDEX_op_ld32s_i64, { R, R } },
++    { INDEX_op_ld_i64, { R, R } },
++
++    { INDEX_op_st8_i64, { R, R } },
++    { INDEX_op_st16_i64, { R, R } },
++    { INDEX_op_st32_i64, { R, R } },
++    { INDEX_op_st_i64, { R, R } },
++
++    { INDEX_op_add_i64, { R, RI, RI } },
++    { INDEX_op_sub_i64, { R, RI, RI } },
++    { INDEX_op_mul_i64, { R, RI, RI } },
++#if T_TCG_TARGET_HAS_div_i64
++    { INDEX_op_div_i64, { R, R, R } },
++    { INDEX_op_divu_i64, { R, R, R } },
++    { INDEX_op_rem_i64, { R, R, R } },
++    { INDEX_op_remu_i64, { R, R, R } },
++#elif T_TCG_TARGET_HAS_div2_i64
++    { INDEX_op_div2_i64, { R, R, "0", "1", R } },
++    { INDEX_op_divu2_i64, { R, R, "0", "1", R } },
++#endif
++    { INDEX_op_and_i64, { R, RI, RI } },
++#if T_TCG_TARGET_HAS_andc_i64
++    { INDEX_op_andc_i64, { R, RI, RI } },
++#endif
++#if T_TCG_TARGET_HAS_eqv_i64
++    { INDEX_op_eqv_i64, { R, RI, RI } },
++#endif
++#if T_TCG_TARGET_HAS_nand_i64
++    { INDEX_op_nand_i64, { R, RI, RI } },
++#endif
++#if T_TCG_TARGET_HAS_nor_i64
++    { INDEX_op_nor_i64, { R, RI, RI } },
++#endif
++    { INDEX_op_or_i64, { R, RI, RI } },
++#if T_TCG_TARGET_HAS_orc_i64
++    { INDEX_op_orc_i64, { R, RI, RI } },
++#endif
++    { INDEX_op_xor_i64, { R, RI, RI } },
++    { INDEX_op_shl_i64, { R, RI, RI } },
++    { INDEX_op_shr_i64, { R, RI, RI } },
++    { INDEX_op_sar_i64, { R, RI, RI } },
++#if T_TCG_TARGET_HAS_rot_i64
++    { INDEX_op_rotl_i64, { R, RI, RI } },
++    { INDEX_op_rotr_i64, { R, RI, RI } },
++#endif
++#if T_TCG_TARGET_HAS_deposit_i64
++    { INDEX_op_deposit_i64, { R, "0", R } },
++#endif
++    { INDEX_op_brcond_i64, { R, RI } },
++
++#if T_TCG_TARGET_HAS_ext8s_i64
++    { INDEX_op_ext8s_i64, { R, R } },
++#endif
++#if T_TCG_TARGET_HAS_ext16s_i64
++    { INDEX_op_ext16s_i64, { R, R } },
++#endif
++#if T_TCG_TARGET_HAS_ext32s_i64
++    { INDEX_op_ext32s_i64, { R, R } },
++#endif
++#if T_TCG_TARGET_HAS_ext8u_i64
++    { INDEX_op_ext8u_i64, { R, R } },
++#endif
++#if T_TCG_TARGET_HAS_ext16u_i64
++    { INDEX_op_ext16u_i64, { R, R } },
++#endif
++#if T_TCG_TARGET_HAS_ext32u_i64
++    { INDEX_op_ext32u_i64, { R, R } },
++#endif
++    { INDEX_op_ext_i32_i64, { R, R } },
++    { INDEX_op_extu_i32_i64, { R, R } },
++#if T_TCG_TARGET_HAS_bswap16_i64
++    { INDEX_op_bswap16_i64, { R, R } },
++#endif
++#if T_TCG_TARGET_HAS_bswap32_i64
++    { INDEX_op_bswap32_i64, { R, R } },
++#endif
++#if T_TCG_TARGET_HAS_bswap64_i64
++    { INDEX_op_bswap64_i64, { R, R } },
++#endif
++#if T_TCG_TARGET_HAS_not_i64
++    { INDEX_op_not_i64, { R, R } },
++#endif
++#if T_TCG_TARGET_HAS_neg_i64
++    { INDEX_op_neg_i64, { R, R } },
++#endif
++#endif /* T_TCG_TARGET_REG_BITS == 64 */
++
++    { INDEX_op_qemu_ld_i32, { R, L } },
++    { INDEX_op_qemu_ld_i64, { R64, L } },
++
++    { INDEX_op_qemu_st_i32, { R, S } },
++    { INDEX_op_qemu_st_i64, { R64, S } },
++
++#if T_TCG_TARGET_HAS_ext8s_i32
++    { INDEX_op_ext8s_i32, { R, R } },
++#endif
++#if T_TCG_TARGET_HAS_ext16s_i32
++    { INDEX_op_ext16s_i32, { R, R } },
++#endif
++#if T_TCG_TARGET_HAS_ext8u_i32
++    { INDEX_op_ext8u_i32, { R, R } },
++#endif
++#if T_TCG_TARGET_HAS_ext16u_i32
++    { INDEX_op_ext16u_i32, { R, R } },
++#endif
++
++#if T_TCG_TARGET_HAS_bswap16_i32
++    { INDEX_op_bswap16_i32, { R, R } },
++#endif
++#if T_TCG_TARGET_HAS_bswap32_i32
++    { INDEX_op_bswap32_i32, { R, R } },
++#endif
++
++    { -1 },
++};
++
++static const int tcg_target_reg_alloc_order[] = {
++    T_TCG_REG_R0,
++    T_TCG_REG_R1,
++    T_TCG_REG_R2,
++    T_TCG_REG_R3,
++#if 0 /* used for T_TCG_REG_CALL_STACK */
++    T_TCG_REG_R4,
++#endif
++    T_TCG_REG_R5,
++    T_TCG_REG_R6,
++    T_TCG_REG_R7,
++#if T_TCG_TARGET_NB_REGS >= 16
++    T_TCG_REG_R8,
++    T_TCG_REG_R9,
++    T_TCG_REG_R10,
++    T_TCG_REG_R11,
++    T_TCG_REG_R12,
++    T_TCG_REG_R13,
++    T_TCG_REG_R14,
++    T_TCG_REG_R15,
++#endif
++};
++
++#if MAX_OPC_PARAM_IARGS != 5
++# error Fix needed, number of supported input arguments changed!
++#endif
++
++static const int tcg_target_call_iarg_regs[] = {
++    T_TCG_REG_R0,
++    T_TCG_REG_R1,
++    T_TCG_REG_R2,
++    T_TCG_REG_R3,
++#if 0 /* used for T_TCG_REG_CALL_STACK */
++    T_TCG_REG_R4,
++#endif
++    T_TCG_REG_R5,
++#if T_TCG_TARGET_REG_BITS == 32
++    /* 32 bit hosts need 2 * MAX_OPC_PARAM_IARGS registers. */
++    T_TCG_REG_R6,
++    T_TCG_REG_R7,
++#if T_TCG_TARGET_NB_REGS >= 16
++    T_TCG_REG_R8,
++    T_TCG_REG_R9,
++    T_TCG_REG_R10,
++#else
++# error Too few input registers available
++#endif
++#endif
++};
++
++static const int tcg_target_call_oarg_regs[] = {
++    T_TCG_REG_R0,
++#if T_TCG_TARGET_REG_BITS == 32
++    T_TCG_REG_R1
++#endif
++};
++
++#ifndef NDEBUG
++static const char *const tcg_target_reg_names[T_TCG_TARGET_NB_REGS] = {
++    "r00",
++    "r01",
++    "r02",
++    "r03",
++    "r04",
++    "r05",
++    "r06",
++    "r07",
++#if T_TCG_TARGET_NB_REGS >= 16
++    "r08",
++    "r09",
++    "r10",
++    "r11",
++    "r12",
++    "r13",
++    "r14",
++    "r15",
++#if T_TCG_TARGET_NB_REGS >= 32
++    "r16",
++    "r17",
++    "r18",
++    "r19",
++    "r20",
++    "r21",
++    "r22",
++    "r23",
++    "r24",
++    "r25",
++    "r26",
++    "r27",
++    "r28",
++    "r29",
++    "r30",
++    "r31"
++#endif
++#endif
++};
++#endif
++
++void t_patch_reloc(tcg_insn_unit *code_ptr, int type,
++                        intptr_t value, intptr_t addend)
++{
++    /* tcg_out_reloc always uses the same type, addend. */
++    assert(type == sizeof(tcg_target_long));
++    assert(addend == 0);
++    assert(value != 0);
++    if (TCG_TARGET_REG_BITS == 32) {
++        tcg_patch32(code_ptr, value);
++    } else {
++        tcg_patch64(code_ptr, value);
++    }
++}
++
++/* Parse target specific constraints. */
++int t_target_parse_constraint(TCGArgConstraint *ct, const char **pct_str)
++{
++    const char *ct_str = *pct_str;
++    switch (ct_str[0]) {
++    case 'r':
++    case 'L':                   /* qemu_ld constraint */
++    case 'S':                   /* qemu_st constraint */
++        ct->ct |= TCG_CT_REG;
++        tcg_regset_set32(ct->u.regs, 0, BIT(T_TCG_TARGET_NB_REGS) - 1);
++        break;
++    default:
++        return -1;
++    }
++    ct_str++;
++    *pct_str = ct_str;
++    return 0;
++}
++
++#if defined(CONFIG_DEBUG_TCG_INTERPRETER)
++/* Show current bytecode. Used by tcg interpreter. */
++void tci_disas(uint8_t opc)
++{
++    const TCGOpDef *def = &tcg_op_defs[opc];
++    fprintf(stderr, "TCG %s %u, %u, %u\n",
++            def->name, def->nb_oargs, def->nb_iargs, def->nb_cargs);
++}
++#endif
++
++/* Write value (native size). */
++void tcg_out_i(TCGContext *s, tcg_target_ulong v)
++{
++    if (T_TCG_TARGET_REG_BITS == 32) {
++        tcg_out32(s, v);
++    } else {
++        tcg_out64(s, v);
++    }
++}
++
++/* Write opcode. */
++void tcg_out_op_t(TCGContext *s, TCGOpcode op)
++{
++    tcg_out8(s, op);
++    tcg_out8(s, 0);
++}
++
++/* Write register. */
++void tcg_out_r(TCGContext *s, TCGArg t0)
++{
++    assert(t0 < T_TCG_TARGET_NB_REGS);
++    tcg_out8(s, t0);
++}
++
++/* Write register or constant (native size). */
++void tcg_out_ri(TCGContext *s, int const_arg, TCGArg arg)
++{
++    if (const_arg) {
++        assert(const_arg == 1);
++        tcg_out8(s, T_TCG_CONST);
++        tcg_out_i(s, arg);
++    } else {
++        tcg_out_r(s, arg);
++    }
++}
++
++/* Write register or constant (32 bit). */
++void tcg_out_ri32(TCGContext *s, int const_arg, TCGArg arg)
++{
++    if (const_arg) {
++        assert(const_arg == 1);
++        tcg_out8(s, T_TCG_CONST);
++        tcg_out32(s, arg);
++    } else {
++        tcg_out_r(s, arg);
++    }
++}
++
++#if T_TCG_TARGET_REG_BITS == 64
++/* Write register or constant (64 bit). */
++void tcg_out_ri64(TCGContext *s, int const_arg, TCGArg arg)
++{
++    if (const_arg) {
++        assert(const_arg == 1);
++        tcg_out8(s, T_TCG_CONST);
++        tcg_out64(s, arg);
++    } else {
++        tcg_out_r(s, arg);
++    }
++}
++#endif
++
++/* Write label. */
++void tci_out_label(TCGContext *s, TCGLabel *label)
++{
++    if (label->has_value) {
++        tcg_out_i(s, label->u.value);
++        assert(label->u.value);
++    } else {
++        tcg_out_reloc(s, s->code_ptr, sizeof(tcg_target_ulong), label, 0);
++        s->code_ptr += sizeof(tcg_target_ulong);
++    }
++}
++
++void t_tcg_out_ld(TCGContext *s, TCGType type, TCGReg ret, TCGReg arg1,
++                       intptr_t arg2)
++{
++    uint8_t *old_code_ptr = s->code_ptr;
++    if (type == TCG_TYPE_I32) {
++        tcg_out_op_t(s, INDEX_op_ld_i32);
++        tcg_out_r(s, ret);
++        tcg_out_r(s, arg1);
++        tcg_out32(s, arg2);
++    } else {
++        assert(type == TCG_TYPE_I64);
++#if T_TCG_TARGET_REG_BITS == 64
++        tcg_out_op_t(s, INDEX_op_ld_i64);
++        tcg_out_r(s, ret);
++        tcg_out_r(s, arg1);
++        assert(arg2 == (int32_t)arg2);
++        tcg_out32(s, arg2);
++#else
++        TODO();
++#endif
++    }
++    old_code_ptr[1] = s->code_ptr - old_code_ptr;
++}
++
++void t_tcg_out_mov(TCGContext *s, TCGType type, TCGReg ret, TCGReg arg)
++{
++    uint8_t *old_code_ptr = s->code_ptr;
++    assert(ret != arg);
++#if TCG_TARGET_REG_BITS == 32
++    tcg_out_op_t(s, INDEX_op_mov_i32);
++#else
++    tcg_out_op_t(s, INDEX_op_mov_i64);
++#endif
++    tcg_out_r(s, ret);
++    tcg_out_r(s, arg);
++    old_code_ptr[1] = s->code_ptr - old_code_ptr;
++}
++
++void t_tcg_out_movi(TCGContext *s, TCGType type,
++                         TCGReg t0, tcg_target_long arg)
++{
++    uint8_t *old_code_ptr = s->code_ptr;
++    uint32_t arg32 = arg;
++    if (type == TCG_TYPE_I32 || arg == arg32) {
++        tcg_out_op_t(s, INDEX_op_movi_i32);
++        tcg_out_r(s, t0);
++        tcg_out32(s, arg32);
++    } else {
++        assert(type == TCG_TYPE_I64);
++#if T_TCG_TARGET_REG_BITS == 64
++        tcg_out_op_t(s, INDEX_op_movi_i64);
++        tcg_out_r(s, t0);
++        tcg_out64(s, arg);
++#else
++        TODO();
++#endif
++    }
++    old_code_ptr[1] = s->code_ptr - old_code_ptr;
++}
++
++void t_tcg_out_call(TCGContext *s, tcg_insn_unit *arg)
++{
++    uint8_t *old_code_ptr = s->code_ptr;
++    tcg_out_op_t(s, INDEX_op_call);
++    tcg_out_ri(s, 1, (uintptr_t)arg);
++    old_code_ptr[1] = s->code_ptr - old_code_ptr;
++}
++
++void t_tcg_out_op(TCGContext *s, TCGOpcode opc, const TCGArg *args,
++                       const int *const_args)
++{
++    uint8_t *old_code_ptr = s->code_ptr;
++
++    tcg_out_op_t(s, opc);
++
++    switch (opc) {
++    case INDEX_op_exit_tb:
++        tcg_out64(s, args[0]);
++        break;
++    case INDEX_op_goto_tb:
++        if (s->tb_jmp_offset) {
++            /* Direct jump method. */
++            assert(args[0] < ARRAY_SIZE(s->tb_jmp_offset));
++            s->tb_jmp_offset[args[0]] = tcg_current_code_size(s);
++            tcg_out32(s, 0);
++        } else {
++            /* Indirect jump method. */
++            TODO();
++        }
++        assert(args[0] < ARRAY_SIZE(s->tb_next_offset));
++        s->tb_next_offset[args[0]] = tcg_current_code_size(s);
++        break;
++    case INDEX_op_br:
++        tci_out_label(s, arg_label(args[0]));
++        break;
++    case INDEX_op_setcond_i32:
++        tcg_out_r(s, args[0]);
++        tcg_out_r(s, args[1]);
++        tcg_out_ri32(s, const_args[2], args[2]);
++        tcg_out8(s, args[3]);   /* condition */
++        break;
++#if T_TCG_TARGET_REG_BITS == 32
++    case INDEX_op_setcond2_i32:
++        /* setcond2_i32 cond, t0, t1_low, t1_high, t2_low, t2_high */
++        tcg_out_r(s, args[0]);
++        tcg_out_r(s, args[1]);
++        tcg_out_r(s, args[2]);
++        tcg_out_ri32(s, const_args[3], args[3]);
++        tcg_out_ri32(s, const_args[4], args[4]);
++        tcg_out8(s, args[5]);   /* condition */
++        break;
++#elif T_TCG_TARGET_REG_BITS == 64
++    case INDEX_op_setcond_i64:
++        tcg_out_r(s, args[0]);
++        tcg_out_r(s, args[1]);
++        tcg_out_ri64(s, const_args[2], args[2]);
++        tcg_out8(s, args[3]);   /* condition */
++        break;
++#endif
++    case INDEX_op_ld8u_i32:
++    case INDEX_op_ld8s_i32:
++    case INDEX_op_ld16u_i32:
++    case INDEX_op_ld16s_i32:
++    case INDEX_op_ld_i32:
++    case INDEX_op_st8_i32:
++    case INDEX_op_st16_i32:
++    case INDEX_op_st_i32:
++    case INDEX_op_ld8u_i64:
++    case INDEX_op_ld8s_i64:
++    case INDEX_op_ld16u_i64:
++    case INDEX_op_ld16s_i64:
++    case INDEX_op_ld32u_i64:
++    case INDEX_op_ld32s_i64:
++    case INDEX_op_ld_i64:
++    case INDEX_op_st8_i64:
++    case INDEX_op_st16_i64:
++    case INDEX_op_st32_i64:
++    case INDEX_op_st_i64:
++        tcg_out_r(s, args[0]);
++        tcg_out_r(s, args[1]);
++        assert(args[2] == (int32_t)args[2]);
++        tcg_out32(s, args[2]);
++        break;
++    case INDEX_op_add_i32:
++    case INDEX_op_sub_i32:
++    case INDEX_op_mul_i32:
++    case INDEX_op_and_i32:
++    case INDEX_op_andc_i32:     /* Optional (TCG_TARGET_HAS_andc_i32). */
++    case INDEX_op_eqv_i32:      /* Optional (TCG_TARGET_HAS_eqv_i32). */
++    case INDEX_op_nand_i32:     /* Optional (TCG_TARGET_HAS_nand_i32). */
++    case INDEX_op_nor_i32:      /* Optional (TCG_TARGET_HAS_nor_i32). */
++    case INDEX_op_or_i32:
++    case INDEX_op_orc_i32:      /* Optional (TCG_TARGET_HAS_orc_i32). */
++    case INDEX_op_xor_i32:
++    case INDEX_op_shl_i32:
++    case INDEX_op_shr_i32:
++    case INDEX_op_sar_i32:
++    case INDEX_op_rotl_i32:     /* Optional (TCG_TARGET_HAS_rot_i32). */
++    case INDEX_op_rotr_i32:     /* Optional (TCG_TARGET_HAS_rot_i32). */
++        tcg_out_r(s, args[0]);
++        tcg_out_ri32(s, const_args[1], args[1]);
++        tcg_out_ri32(s, const_args[2], args[2]);
++        break;
++    case INDEX_op_deposit_i32:  /* Optional (TCG_TARGET_HAS_deposit_i32). */
++        tcg_out_r(s, args[0]);
++        tcg_out_r(s, args[1]);
++        tcg_out_r(s, args[2]);
++        assert(args[3] <= UINT8_MAX);
++        tcg_out8(s, args[3]);
++        assert(args[4] <= UINT8_MAX);
++        tcg_out8(s, args[4]);
++        break;
++
++#if T_TCG_TARGET_REG_BITS == 64
++    case INDEX_op_add_i64:
++    case INDEX_op_sub_i64:
++    case INDEX_op_mul_i64:
++    case INDEX_op_and_i64:
++    case INDEX_op_andc_i64:     /* Optional (TCG_TARGET_HAS_andc_i64). */
++    case INDEX_op_eqv_i64:      /* Optional (TCG_TARGET_HAS_eqv_i64). */
++    case INDEX_op_nand_i64:     /* Optional (TCG_TARGET_HAS_nand_i64). */
++    case INDEX_op_nor_i64:      /* Optional (TCG_TARGET_HAS_nor_i64). */
++    case INDEX_op_or_i64:
++    case INDEX_op_orc_i64:      /* Optional (TCG_TARGET_HAS_orc_i64). */
++    case INDEX_op_xor_i64:
++    case INDEX_op_shl_i64:
++    case INDEX_op_shr_i64:
++    case INDEX_op_sar_i64:
++    case INDEX_op_rotl_i64:     /* Optional (TCG_TARGET_HAS_rot_i64). */
++    case INDEX_op_rotr_i64:     /* Optional (TCG_TARGET_HAS_rot_i64). */
++        tcg_out_r(s, args[0]);
++        tcg_out_ri64(s, const_args[1], args[1]);
++        tcg_out_ri64(s, const_args[2], args[2]);
++        break;
++    case INDEX_op_deposit_i64:  /* Optional (TCG_TARGET_HAS_deposit_i64). */
++        tcg_out_r(s, args[0]);
++        tcg_out_r(s, args[1]);
++        tcg_out_r(s, args[2]);
++        assert(args[3] <= UINT8_MAX);
++        tcg_out8(s, args[3]);
++        assert(args[4] <= UINT8_MAX);
++        tcg_out8(s, args[4]);
++        break;
++    case INDEX_op_div_i64:      /* Optional (TCG_TARGET_HAS_div_i64). */
++    case INDEX_op_divu_i64:     /* Optional (TCG_TARGET_HAS_div_i64). */
++    case INDEX_op_rem_i64:      /* Optional (TCG_TARGET_HAS_div_i64). */
++    case INDEX_op_remu_i64:     /* Optional (TCG_TARGET_HAS_div_i64). */
++        TODO();
++        break;
++    case INDEX_op_div2_i64:     /* Optional (TCG_TARGET_HAS_div2_i64). */
++    case INDEX_op_divu2_i64:    /* Optional (TCG_TARGET_HAS_div2_i64). */
++        TODO();
++        break;
++    case INDEX_op_brcond_i64:
++        tcg_out_r(s, args[0]);
++        tcg_out_ri64(s, const_args[1], args[1]);
++        tcg_out8(s, args[2]);           /* condition */
++        tci_out_label(s, arg_label(args[3]));
++        break;
++    case INDEX_op_bswap16_i64:  /* Optional (TCG_TARGET_HAS_bswap16_i64). */
++    case INDEX_op_bswap32_i64:  /* Optional (TCG_TARGET_HAS_bswap32_i64). */
++    case INDEX_op_bswap64_i64:  /* Optional (TCG_TARGET_HAS_bswap64_i64). */
++    case INDEX_op_not_i64:      /* Optional (TCG_TARGET_HAS_not_i64). */
++    case INDEX_op_neg_i64:      /* Optional (TCG_TARGET_HAS_neg_i64). */
++    case INDEX_op_ext8s_i64:    /* Optional (TCG_TARGET_HAS_ext8s_i64). */
++    case INDEX_op_ext8u_i64:    /* Optional (TCG_TARGET_HAS_ext8u_i64). */
++    case INDEX_op_ext16s_i64:   /* Optional (TCG_TARGET_HAS_ext16s_i64). */
++    case INDEX_op_ext16u_i64:   /* Optional (TCG_TARGET_HAS_ext16u_i64). */
++    case INDEX_op_ext32s_i64:   /* Optional (TCG_TARGET_HAS_ext32s_i64). */
++    case INDEX_op_ext32u_i64:   /* Optional (TCG_TARGET_HAS_ext32u_i64). */
++    case INDEX_op_ext_i32_i64:
++    case INDEX_op_extu_i32_i64:
++#endif /* TCG_TARGET_REG_BITS == 64 */
++    case INDEX_op_neg_i32:      /* Optional (TCG_TARGET_HAS_neg_i32). */
++    case INDEX_op_not_i32:      /* Optional (TCG_TARGET_HAS_not_i32). */
++    case INDEX_op_ext8s_i32:    /* Optional (TCG_TARGET_HAS_ext8s_i32). */
++    case INDEX_op_ext16s_i32:   /* Optional (TCG_TARGET_HAS_ext16s_i32). */
++    case INDEX_op_ext8u_i32:    /* Optional (TCG_TARGET_HAS_ext8u_i32). */
++    case INDEX_op_ext16u_i32:   /* Optional (TCG_TARGET_HAS_ext16u_i32). */
++    case INDEX_op_bswap16_i32:  /* Optional (TCG_TARGET_HAS_bswap16_i32). */
++    case INDEX_op_bswap32_i32:  /* Optional (TCG_TARGET_HAS_bswap32_i32). */
++        tcg_out_r(s, args[0]);
++        tcg_out_r(s, args[1]);
++        break;
++    case INDEX_op_div_i32:      /* Optional (TCG_TARGET_HAS_div_i32). */
++    case INDEX_op_divu_i32:     /* Optional (TCG_TARGET_HAS_div_i32). */
++    case INDEX_op_rem_i32:      /* Optional (TCG_TARGET_HAS_div_i32). */
++    case INDEX_op_remu_i32:     /* Optional (TCG_TARGET_HAS_div_i32). */
++        tcg_out_r(s, args[0]);
++        tcg_out_ri32(s, const_args[1], args[1]);
++        tcg_out_ri32(s, const_args[2], args[2]);
++        break;
++    case INDEX_op_div2_i32:     /* Optional (TCG_TARGET_HAS_div2_i32). */
++    case INDEX_op_divu2_i32:    /* Optional (TCG_TARGET_HAS_div2_i32). */
++        TODO();
++        break;
++#if T_TCG_TARGET_REG_BITS == 32
++    case INDEX_op_add2_i32:
++    case INDEX_op_sub2_i32:
++        tcg_out_r(s, args[0]);
++        tcg_out_r(s, args[1]);
++        tcg_out_r(s, args[2]);
++        tcg_out_r(s, args[3]);
++        tcg_out_r(s, args[4]);
++        tcg_out_r(s, args[5]);
++        break;
++    case INDEX_op_brcond2_i32:
++        tcg_out_r(s, args[0]);
++        tcg_out_r(s, args[1]);
++        tcg_out_ri32(s, const_args[2], args[2]);
++        tcg_out_ri32(s, const_args[3], args[3]);
++        tcg_out8(s, args[4]);           /* condition */
++        tci_out_label(s, arg_label(args[5]));
++        break;
++    case INDEX_op_mulu2_i32:
++        tcg_out_r(s, args[0]);
++        tcg_out_r(s, args[1]);
++        tcg_out_r(s, args[2]);
++        tcg_out_r(s, args[3]);
++        break;
++#endif
++    case INDEX_op_brcond_i32:
++        tcg_out_r(s, args[0]);
++        tcg_out_ri32(s, const_args[1], args[1]);
++        tcg_out8(s, args[2]);           /* condition */
++        tci_out_label(s, arg_label(args[3]));
++        break;
++    case INDEX_op_qemu_ld_i32:
++        tcg_out_r(s, *args++);
++        tcg_out_r(s, *args++);
++        if (TARGET_LONG_BITS > TCG_TARGET_REG_BITS) {
++            tcg_out_r(s, *args++);
++        }
++        tcg_out_i(s, *args++);
++        break;
++    case INDEX_op_qemu_ld_i64:
++        tcg_out_r(s, *args++);
++        if (T_TCG_TARGET_REG_BITS == 32) {
++            tcg_out_r(s, *args++);
++        }
++        tcg_out_r(s, *args++);
++        if (TARGET_LONG_BITS > T_TCG_TARGET_REG_BITS) {
++            tcg_out_r(s, *args++);
++        }
++        tcg_out_i(s, *args++);
++        break;
++    case INDEX_op_qemu_st_i32:
++        tcg_out_r(s, *args++);
++        tcg_out_r(s, *args++);
++        if (TARGET_LONG_BITS > T_TCG_TARGET_REG_BITS) {
++            tcg_out_r(s, *args++);
++        }
++        tcg_out_i(s, *args++);
++        break;
++    case INDEX_op_qemu_st_i64:
++        tcg_out_r(s, *args++);
++        if (TCG_TARGET_REG_BITS == 32) {
++            tcg_out_r(s, *args++);
++        }
++        tcg_out_r(s, *args++);
++        if (TARGET_LONG_BITS > T_TCG_TARGET_REG_BITS) {
++            tcg_out_r(s, *args++);
++        }
++        tcg_out_i(s, *args++);
++        break;
++    case INDEX_op_mov_i32:  /* Always emitted via tcg_out_mov.  */
++    case INDEX_op_mov_i64:
++    case INDEX_op_movi_i32: /* Always emitted via tcg_out_movi.  */
++    case INDEX_op_movi_i64:
++    case INDEX_op_call:     /* Always emitted via tcg_out_call.  */
++    default:
++        tcg_abort();
++    }
++    old_code_ptr[1] = s->code_ptr - old_code_ptr;
++}
++
++void t_tcg_out_st(TCGContext *s, TCGType type, TCGReg arg, TCGReg arg1,
++                       intptr_t arg2)
++{
++    uint8_t *old_code_ptr = s->code_ptr;
++    if (type == TCG_TYPE_I32) {
++        tcg_out_op_t(s, INDEX_op_st_i32);
++        tcg_out_r(s, arg);
++        tcg_out_r(s, arg1);
++        tcg_out32(s, arg2);
++    } else {
++        assert(type == TCG_TYPE_I64);
++#if T_TCG_TARGET_REG_BITS == 64
++        tcg_out_op_t(s, INDEX_op_st_i64);
++        tcg_out_r(s, arg);
++        tcg_out_r(s, arg1);
++        tcg_out32(s, arg2);
++#else
++        TODO();
++#endif
++    }
++    old_code_ptr[1] = s->code_ptr - old_code_ptr;
++}
++
++/* Test if a constant matches the constraint. */
++int t_tcg_target_const_match(tcg_target_long val, TCGType type,
++                                  const TCGArgConstraint *arg_ct)
++{
++    /* No need to return 0 or 1, 0 or != 0 is good enough. */
++    return arg_ct->ct & TCG_CT_CONST;
++}
++
++static void tcg_target_init(TCGContext *s)
++{
++#if defined(CONFIG_DEBUG_TCG_INTERPRETER)
++    const char *envval = getenv("DEBUG_TCG");
++    if (envval) {
++        qemu_set_log(strtol(envval, NULL, 0));
++    }
++#endif
++
++    /* The current code uses uint8_t for tcg operations. */
++    assert(tcg_op_defs_max <= UINT8_MAX);
++
++    /* Registers available for 32 bit operations. */
++    tcg_regset_set32(tcg_target_available_regs[TCG_TYPE_I32], 0,
++                     BIT(T_TCG_TARGET_NB_REGS) - 1);
++    /* Registers available for 64 bit operations. */
++    tcg_regset_set32(tcg_target_available_regs[TCG_TYPE_I64], 0,
++                     BIT(T_TCG_TARGET_NB_REGS) - 1);
++    /* TODO: Which registers should be set here? */
++    tcg_regset_set32(tcg_target_call_clobber_regs, 0,
++                     BIT(T_TCG_TARGET_NB_REGS) - 1);
++
++    tcg_regset_clear(s->reserved_regs);
++    tcg_regset_set_reg(s->reserved_regs, T_TCG_REG_CALL_STACK);
++    tcg_add_target_add_op_defs(tcg_target_op_defs);
++
++    /* We use negative offsets from "sp" so that we can distinguish
++       stores that might pretend to be call arguments.  */
++    tcg_set_frame(s, T_TCG_REG_CALL_STACK,
++                  -CPU_TEMP_BUF_NLONGS * sizeof(long),
++                  CPU_TEMP_BUF_NLONGS * sizeof(long));
++}
++
++/* Generate global QEMU prologue and epilogue code. */
++static inline void tcg_target_qemu_prologue(TCGContext *s)
++{
++}
