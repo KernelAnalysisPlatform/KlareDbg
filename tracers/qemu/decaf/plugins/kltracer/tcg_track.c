@@ -1,12 +1,16 @@
+#include <sys/mman.h>
 #include "config.h"
 #include "qemu-common.h"
-#include "exec/exec-all.h"           /* MAX_OPC_PARAM_IARGS */
-#include "exec/cpu_ldst.h"
-#include "tcg-op.h"
-#include "kldbg/tcg_track.h"
+#include "exec-all.h"           /* MAX_OPC_PARAM_IARGS */
+#include "tcg_track.h"
+
+// target_ulong mod_addr = 0;
+// target_ulong mod_size = 0;
+target_ulong mod_addr = 0xffffffffc0082000;
+target_ulong mod_size = 16384;
 
 int GLOBAL_QIRA_did_init = 0;
-CPUArchState *GLOBAL_CPUArchState;
+//CPUState *GLOBAL_CPUState;
 struct change *GLOBAL_change_buffer;
 
 uint32_t GLOBAL_qira_log_fd;
@@ -35,10 +39,10 @@ void resize_change_buffer(size_t size) {
   if (GLOBAL_change_buffer == NULL) QIRA_DEBUG("MMAP FAILED!\n");
 }
 
-void init_QIRA(CPUArchState *env, int id) {
+void init_QIRA(int id) {
   QIRA_DEBUG("init QIRA called\n");
   GLOBAL_QIRA_did_init = 1;
-  GLOBAL_CPUArchState = env;   // unused
+  //GLOBAL_CPUArchState = env;   // unused
 
   OPEN_GLOBAL_ASM_FILE
 
@@ -79,11 +83,6 @@ void init_QIRA(CPUArchState *env, int id) {
       dup2(dupme, i);
     }
   }
-
-  // if (GLOBAL_librarymap == NULL){
-  //     init_librarymap();
-  // }
-
   // no more opens can happen here in QEMU, only the target process
 }
 
@@ -136,23 +135,23 @@ struct change *track_syscall_begin(void *env, target_ulong sysnr) {
 
 // all loads and store happen in libraries...
 void track_load(target_ulong addr, uint64_t data, int size) {
-  QIRA_DEBUG("load:  0x%x:%d\n", addr, size);
+  QIRA_DEBUG("load:  0x%lx:%d\n", addr, size);
   add_change(addr, data, IS_MEM | size);
 }
 
 void track_store(target_ulong addr, uint64_t data, int size) {
-  QIRA_DEBUG("store: 0x%x:%d = 0x%lX\n", addr, size, data);
+  QIRA_DEBUG("store: 0x%lx:%d = 0x%lX\n", addr, size, data);
   add_change(addr, data, IS_MEM | IS_WRITE | size);
 }
 
 void track_read(target_ulong base, target_ulong offset, target_ulong data, int size) {
-  QIRA_DEBUG("read:  %x+%x:%d = %x\n", base, offset, size, data);
+  QIRA_DEBUG("read:  %lx+l%x:%d = %x\n", base, offset, size, data);
   if ((int)offset < 0) return;
   if (GLOBAL_logstate->is_filtered == 0) add_change(offset, data, size);
 }
 
 void track_write(target_ulong base, target_ulong offset, target_ulong data, int size) {
-  QIRA_DEBUG("write: %x+%x:%d = %x\n", base, offset, size, data);
+  QIRA_DEBUG("write: %lx+%lx:%d = %x\n", base, offset, size, data);
   if ((int)offset < 0) return;
   if (GLOBAL_logstate->is_filtered == 0) add_change(offset, data, IS_WRITE | size);
   else add_pending_change(offset, data, IS_WRITE | size);

@@ -1,12 +1,12 @@
 #ifndef __TCG_TRACK_H__
 #define __TCG_TRACK_H__
 
-#define QIRA_DEBUG(...) {}
+//#define QIRA_DEBUG(...) {}
 //#define QIRA_DEBUG qemu_debug
-//#define QIRA_DEBUG printf
+#define QIRA_DEBUG printf
 
 /* address and size of module to be traced */
-target_ulong mod_addr, mod_size;
+extern target_ulong mod_addr, mod_size;
 
 #define IN_MOD(x) (mod_addr <= x && x < mod_addr + mod_size)
 // struct storing change data
@@ -18,7 +18,7 @@ struct change {
 };
 
 // prototypes
-void init_QIRA(CPUArchState *env, int id);
+void init_QIRA(int id);
 struct change *add_change(target_ulong addr, uint64_t data, uint32_t flags);
 void track_load(target_ulong a, uint64_t data, int size);
 void track_store(target_ulong a, uint64_t data, int size);
@@ -38,7 +38,7 @@ void resize_change_buffer(size_t size);
 #define FAKE_SYSCALL_LOADSEG 0x10001
 
 extern int GLOBAL_QIRA_did_init;
-extern CPUArchState *GLOBAL_CPUArchState;
+extern CPUState *GLOBAL_CPUState;
 extern struct change *GLOBAL_change_buffer;
 
 extern uint32_t GLOBAL_qira_log_fd;
