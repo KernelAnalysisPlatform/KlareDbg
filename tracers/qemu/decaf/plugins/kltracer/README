@@ -1,0 +1,6 @@
+1. go to kltracer directory.
+  ./configure --decaf-path= ..
+   make
+
+2. start DECAF and load kltracer plugin.
+   (It should be proceeded automatically by KlDbg frontend)
