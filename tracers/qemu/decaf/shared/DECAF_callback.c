@@ -124,7 +124,7 @@ static int enableAllBlockEndCallbacksCount = 0;
 
 //We use hashtables to keep track of individual basic blocks
 // that is associated with a callback - we ignore
-// the conditional that is registered with the callback 
+// the conditional that is registered with the callback
 // right now - that is the conditional has been changed
 // into a simple "enable" bit. The reasoning is that the condition is controlled
 // by the user, and so there is no way for us to update
@@ -185,7 +185,7 @@ static LIST_HEAD(callback_list_head, callback_struct) callback_list_heads[DECAF_
 
 //LOK: I turned this into a dumb function
 // and so we can have the more specialized helper functions
-// for the block begin and block end callbacks 
+// for the block begin and block end callbacks
 int DECAF_is_callback_needed(DECAF_callback_type_t cb_type)
 {
   return !LIST_EMPTY(&callback_list_heads[cb_type]);
@@ -262,7 +262,7 @@ DECAF_Handle DECAF_registerOptimizedBlockBeginCallback(
   {
     return (DECAF_NULL_HANDLE);
   }
-  
+
   //Heng: Optimization on OCB_CONST is not stable. We use OCB_ALL instead for now.
   if (type == OCB_CONST) type = OCB_ALL;
 
@@ -588,7 +588,7 @@ DECAF_errno_t DECAF_unregisterOptimizedBlockBeginCallback(DECAF_Handle handle)
         if (CountingHashtable_remove(pOBBTable, cb_struct->from) == 0)
         {
           //Heng: Comment out the line below, so we don't flush the translation block immediately.
-          //Guest kernel reboot is observed if we immediately flush the translation block. So I 
+          //Guest kernel reboot is observed if we immediately flush the translation block. So I
           //decide not to do so. It may even help to improve performance in certain cases.
 
           DECAF_flushTranslationCache(BLOCK_LEVEL,cb_struct->from);
@@ -705,7 +705,7 @@ int DECAF_unregister_callback(DECAF_callback_type_t cb_type, DECAF_Handle handle
 		goto done;
     }
 #endif
-    
+
    if(LIST_EMPTY(&callback_list_heads[cb_type]))    {
       DECAF_flushTranslationCache(ALL_CACHE,0);
    }
@@ -735,6 +735,46 @@ void DECAF_invoke_tlb_exec_callback(CPUState *env, gva_t vaddr)
 			  cb_struct->callback(&params);
 		  }
 	  }
+}
+/* KLDBG: */
+void helper_DECAF_invoke_register_read_callback(CPUState *env, long offset, target_ulong value)
+{
+	static callback_struct_t *cb_struct, *cb_temp;
+	static DECAF_Callback_Params params;
+	params.rr.base = env;
+	params.rr.offset = offset;
+	params.rr.value = value;
+	//printf("[read] env:%lx, offset:%ld, value: %d\n", env, offset, value);
+PUSH_ALL()
+	LIST_FOREACH_SAFE(cb_struct, &callback_list_heads[DECAF_REG_READ_CB], link, cb_temp)
+	{
+		// If it is a global callback or it is within the execution context,
+		// invoke this callback
+        params.cbhandle = (DECAF_Handle)cb_struct;
+		if (!cb_struct->enabled || *cb_struct->enabled)
+			cb_struct->callback(&params);
+	}
+  POP_ALL()
+	return;
+}
+void helper_DECAF_invoke_register_write_callback(CPUState *env, long offset, target_ulong value)
+{
+	static callback_struct_t *cb_struct, *cb_temp;
+	static DECAF_Callback_Params params;
+	params.rw.base = env;
+	params.rw.offset = offset;
+	params.rw.value = value;
+PUSH_ALL()
+	LIST_FOREACH_SAFE(cb_struct, &callback_list_heads[DECAF_REG_WRITE_CB], link, cb_temp)
+	{
+		// If it is a global callback or it is within the execution context,
+		// invoke this callback
+        params.cbhandle = (DECAF_Handle)cb_struct;
+		if (!cb_struct->enabled || *cb_struct->enabled)
+			cb_struct->callback(&params);
+	}
+  POP_ALL()
+	return;
 }
 
 void helper_DECAF_invoke_opcode_range_callback(
@@ -1161,4 +1201,3 @@ void DECAF_callback_init(void)
   bEnableAllBlockEndCallbacks = 0;
   enableAllBlockEndCallbacksCount = 0;
 }
-

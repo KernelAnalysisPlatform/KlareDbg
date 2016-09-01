@@ -28,6 +28,10 @@ DEF_HELPER_0(DECAF_taint_patch,void)
 DEF_HELPER_0(DECAF_taint_cmpxchg, void)
 #endif /* CONFIG_TCG_TAINT */
 
+/* KLDBG: */
+DEF_HELPER_3(DECAF_invoke_register_read_callback,void,ptr,tl,tl)
+DEF_HELPER_3(DECAF_invoke_register_write_callback,void,ptr,tl,tl)
+
 DEF_HELPER_0(lock, void)
 DEF_HELPER_0(unlock, void)
 DEF_HELPER_2(write_eflags, void, tl, i32)

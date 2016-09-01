@@ -56,6 +56,9 @@ typedef enum {
         DECAF_TLB_EXEC_CB,
         DECAF_READ_TAINTMEM_CB,
         DECAF_WRITE_TAINTMEM_CB,
+				/* KLDBG: */
+				DECAF_REG_READ_CB,
+				DECAF_REG_WRITE_CB,
 #ifdef CONFIG_TCG_LLVM
 	DECAF_BLOCK_TRANS_CB,
 #endif /* CONFIG_TCG_LLVM */
@@ -148,6 +151,20 @@ typedef struct _DECAF_Mem_Write_Params
 	DATA_TYPE dt;
 	unsigned long value;
 }DECAF_Mem_Write_Params;
+/* KLDBG: */
+typedef struct _DECAF_Reg_Write_Params
+{
+	CPUState *base;
+	long offset;
+	target_ulong value;
+}DECAF_Reg_Write_Params;
+typedef struct _DECAF_Reg_Read_Params
+{
+	CPUState *base;
+	long offset;
+	target_ulong value;
+}DECAF_Reg_Read_Params;
+
 typedef struct _DECAF_EIP_Check_Params
 {
 	gva_t source_eip;
@@ -220,6 +237,9 @@ typedef struct _DECAF_Callback_Params
 		DECAF_Tlb_Exec_Params tx;
 		DECAF_Read_Taint_Mem rt;
 		DECAF_Write_Taint_Mem wt;
+		/* KLDBG: */
+		DECAF_Reg_Read_Params rr;
+		DECAF_Reg_Write_Params rw;
 #ifdef CONFIG_TCG_LLVM
 		DECAF_Block_Trans_Params bt;
 #endif /* CONFIG_TCG_LLVM */

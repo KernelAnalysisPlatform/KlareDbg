@@ -1,6 +1,5 @@
 #include "qemu-common.h"
 
-#ifdef CONFIG_TCG_TAINT
 
 #include <stdarg.h>
 #include <stdlib.h>
@@ -10,7 +9,7 @@
 #include <signal.h>
 
 #include "tcg.h"
-#include "tainting/tcg_taint.h"
+#include "kltrace.h"
 
 #include "tainting/taint_memory.h"
 #include "config-target.h"
@@ -21,13 +20,11 @@
 
 /* Target-specific metadata buffers are extern'd here so that the taint
    IR insertions can update them. */
-#ifdef CONFIG_TCG_TAINT
 #if defined(TARGET_I386)
 extern uint8_t gen_opc_cc_op[OPC_BUF_SIZE];
 #elif defined(TARGET_ARM)
 extern uint32_t gen_opc_condexec_bits[OPC_BUF_SIZE];
 #endif /* TARGET_I386 */
-#endif /* CONFIG_TCG_TAINT */
 
 uint16_t *gen_old_opc_ptr;
 TCGArg *gen_old_opparam_ptr;
@@ -55,18 +52,32 @@ typedef CPUMIPSState OurCPUState;
 #define TCG_BITWISE_TAINT 1
 //#define TAINT_NEW_POINTER 1
 
-#if defined(LOG_TAINTED_EIP)
+//#if defined(LOG_TAINTED_EIP)
 #define MAX_TAINT_LOG_TEMPS 10
 static TCGArg helper_arg_array[MAX_TAINT_LOG_TEMPS];
 static TCGv taint_log_temps[MAX_TAINT_LOG_TEMPS];
 static inline void set_con_i32(int index, TCGv arg)
 {
-
 	  tcg_gen_mov_i32(taint_log_temps[index], arg);
-	  helper_arg_array[index] = taint_log_temps[index];
+		helper_arg_array[index] = taint_log_temps[index];
+}
+static inline void set_con_i64(int index, TCGv arg)
+{
+	  tcg_gen_mov_i64(taint_log_temps[index], arg);
+		helper_arg_array[index] = taint_log_temps[index];
+}
+static inline void set_coni_i32(int index, TCGArg arg)
+{
+	  tcg_gen_movi_i32(taint_log_temps[index], arg);
+		helper_arg_array[index] = taint_log_temps[index];
+}
+static inline void set_coni_i64(int index, TCGArg arg)
+{
+	  tcg_gen_movi_i64(taint_log_temps[index], arg);
+		helper_arg_array[index] = taint_log_temps[index];
 }
 
-#endif
+//#endif
 
 // Exposed externs
 TCGv shadow_arg[TCG_MAX_TEMPS];
@@ -86,7 +97,7 @@ extern TCGv_ptr cpu_env;
 
   if (!tcg_ctx.temps[shadow_arg[arg]].temp_allocated) {
     if (tcg_ctx.temps[arg].temp_local)
-#if TCG_TARGET_REG_BITS == 32 
+#if TCG_TARGET_REG_BITS == 32
       shadow_arg[arg] = tcg_temp_local_new_i32();
     else
       shadow_arg[arg] = tcg_temp_new_i32();
@@ -127,6 +138,47 @@ static void DUMMY_TAINT(int nb_oargs, int nb_args)
     }
   }
 }
+static inline access_register_common(size_t mode, uint8_t w) {
+	//if (DECAF_is_callback_needed(DECAF_READ_REG_CB)){
+			TCGv value;
+			TCGArg base, offset;
+			value = gen_opparam_ptr[-3]; // value
+			base = gen_opparam_ptr[-2];	// Address of CPUArch
+			offset = gen_opparam_ptr[-1];	// register offset
+			if (mode == 32) {
+				set_con_i32(0, base);
+				set_coni_i32(1, offset);
+				set_con_i32(2, value);
+			}
+			else if (mode == 64) {
+				set_con_i64(0, base);
+				set_coni_i64(1, offset);
+				set_con_i64(2, value);
+			}
+			if (w == 1) {
+			tcg_gen_helperN(helper_DECAF_invoke_register_write_callback, 0, 0,
+											TCG_CALL_DUMMY_ARG, 3, helper_arg_array);
+			}
+			else {
+			tcg_gen_helperN(helper_DECAF_invoke_register_read_callback, 0, 0,
+											TCG_CALL_DUMMY_ARG, 3, helper_arg_array);
+			}
+		//}
+
+}
+
+static inline read_register_32() {
+	access_register_common(32, 0);
+}
+static inline write_register_32() {
+	access_register_common(32, 1);
+}
+static inline read_register_64() {
+	access_register_common(64, 0);
+}
+static inline write_register_64() {
+	access_register_common(64, 1);
+}
 
 #if 0 //defined(USE_TCG_OPTIMIZATIONS)
 /* This holds our metadata for each of the original opcodes to
@@ -135,6 +187,160 @@ static void DUMMY_TAINT(int nb_oargs, int nb_args)
 static uint8_t gen_old_liveness_metadata[OPC_BUF_SIZE];
 static void build_liveness_metadata(TCGContext *s);
 #endif /* USE_TCG_OPTIMIZATIONS */
+static inline int gen_kltrace_insn(int search_pc)
+{
+	/* Opcode and parameter buffers */
+  static uint16_t gen_old_opc_buf[OPC_BUF_SIZE];
+  static TCGArg gen_old_opparam_buf[OPPARAM_BUF_SIZE];
+  /* Metadata buffers for "search_pc" TBs */
+  static target_ulong gen_old_opc_pc[OPC_BUF_SIZE];
+  static uint8_t gen_old_opc_instr_start[OPC_BUF_SIZE];
+  static uint16_t gen_old_opc_icount[OPC_BUF_SIZE];
+#if defined(TARGET_I386)
+  static uint8_t gen_old_opc_cc_op[OPC_BUF_SIZE];
+#elif defined(TARGET_ARM)
+  static uint32_t gen_old_opc_condexec_bits[OPC_BUF_SIZE];
+#endif /* TARGET check */
+  int metabuffer_offset = 0;
+
+  int nb_opc = gen_opc_ptr - gen_old_opc_ptr;
+  int return_lj = -1;
+
+  int nb_args=0;
+  int opc_index=0, opparam_index=0;
+  int i=0/*, x=0*/;
+  uint16_t opc=0;
+  int nb_oargs=0, nb_iargs=0, nb_cargs=0;
+  TCGv arg0, arg1, arg2, arg3, arg4, arg5;
+  TCGv t0, t1, t2, t3, t4, t_zero;
+#if defined(TARGET_I386)
+  TCGv arg6, t5, t6;
+#endif /* TARGET check */
+  TCGv orig0, orig1, orig2, orig3, orig4, orig5;
+
+  /* Copy all of the existing ops/parms into a new buffer to back them up. */
+  memcpy(gen_old_opc_buf, gen_old_opc_ptr, sizeof(uint16_t)*(nb_opc));
+  memcpy(gen_old_opparam_buf, gen_old_opparam_ptr, sizeof(TCGArg)* (gen_opparam_ptr - gen_old_opparam_ptr));
+
+  /* If we're inserting taint IR into a searchable TB, copy all of the
+     existing metadata for the TB into a new buffer to back them up. */
+  if (search_pc) {
+    /* Figure out where we're starting in the metabuffers */
+    metabuffer_offset = gen_old_opc_ptr - gen_opc_buf;
+
+    /* Make our backup copies of the metadata buffers */
+    memcpy(gen_old_opc_pc, (gen_opc_pc + metabuffer_offset), sizeof(target_ulong)*(nb_opc));
+    memcpy(gen_old_opc_instr_start, (gen_opc_instr_start + metabuffer_offset), sizeof(uint8_t)*(nb_opc));
+    memcpy(gen_old_opc_icount, (gen_opc_icount + metabuffer_offset), sizeof(uint16_t)*(nb_opc));
+#if defined(TARGET_I386)
+    memcpy(gen_old_opc_cc_op, (gen_opc_cc_op + metabuffer_offset), sizeof(uint8_t)*(nb_opc));
+#elif defined(TARGET_ARM)
+    memcpy(gen_old_opc_condexec_bits, (gen_opc_condexec_bits + metabuffer_offset), sizeof(uint32_t)*(nb_opc));
+#endif /* TARGET check */
+
+    memset(gen_opc_instr_start + metabuffer_offset, 0, sizeof(uint8_t) * (OPC_BUF_SIZE - metabuffer_offset));
+  }
+
+  /* Reset the ops/parms buffers */
+  gen_opc_ptr = gen_old_opc_ptr;
+  gen_opparam_ptr = gen_old_opparam_ptr;
+
+//#if defined(LOG_TAINTED_EIP)
+  /* Allocate our temps for logging taint */
+  for (i=0; i < MAX_TAINT_LOG_TEMPS; i++)
+#if TCG_TARGET_REG_BITS == 32
+    taint_log_temps[i] = tcg_temp_new_i32();
+#else
+    taint_log_temps[i] = tcg_temp_new_i64();
+#endif /* TCG_TARGET_REG_BITS */
+//#endif /* LOG_ check */
+
+  /* Copy and instrument the opcodes that need taint tracking */
+  while(opc_index < nb_opc) {
+    /* If needed, copy all of the appropriate metadata */
+    if (search_pc && (gen_old_opc_instr_start[opc_index] == 1)) {
+      return_lj = gen_opc_ptr - gen_opc_buf;
+      gen_opc_pc[return_lj] = gen_old_opc_pc[opc_index];
+      gen_opc_instr_start[return_lj] = 1;
+      gen_opc_icount[return_lj] = gen_old_opc_icount[opc_index];
+#if defined(TARGET_I386)
+      gen_opc_cc_op[return_lj] = gen_old_opc_cc_op[opc_index];
+#elif defined(TARGET_ARM)
+      gen_opc_condexec_bits[return_lj] = gen_old_opc_condexec_bits[opc_index];
+#endif /* TARGET check */
+    }
+
+    /* Copy the opcode to be instrumented */
+    opc = *(gen_opc_ptr++) = gen_old_opc_buf[opc_index++];
+
+    /* Determine the number and type of arguments for the opcode */
+    if (opc == INDEX_op_call) {
+      TCGArg arg = gen_old_opparam_buf[opparam_index];
+      nb_oargs = arg >> 16;
+      nb_iargs = arg & 0xffff;
+      nb_cargs = tcg_op_defs[opc].nb_cargs;
+      nb_args = nb_oargs + nb_iargs + nb_cargs + 1;
+    } else if (opc == INDEX_op_nopn) {
+      nb_args = nb_cargs = gen_old_opparam_buf[opparam_index];
+      nb_oargs = nb_iargs = 0;
+    } else {
+      nb_args = tcg_op_defs[opc].nb_args;
+      nb_oargs = tcg_op_defs[opc].nb_oargs;
+      nb_iargs = tcg_op_defs[opc].nb_iargs;
+      nb_cargs = tcg_op_defs[opc].nb_cargs;
+    }
+
+    /* Copy the appropriate number of arguments for the opcode */
+    for(i=0; i<nb_args; i++)
+      *(gen_opparam_ptr++) = gen_old_opparam_buf[opparam_index++];
+
+    /* Copy the current gen_opc_ptr.  After we instrument this IR,
+       we compare the copy of gen_opc_ptr against its current value.
+       If it has increased, that means we inserted additional IR and,
+       if this is a "search_pc" TB, that means we know how many extra
+       entries we need to put in the metadata buffers to keep
+       everything in sync. */
+    gen_old_opc_ptr = gen_opc_ptr;
+		switch (opc) {
+			/* QEMU-specific operations. */
+			case INDEX_op_ld8u_i32:
+      case INDEX_op_ld8s_i32:
+      case INDEX_op_ld16u_i32:
+      case INDEX_op_ld16s_i32:
+      case INDEX_op_ld_i32:
+				read_register_32();
+				break;
+      case INDEX_op_ld8u_i64:
+      case INDEX_op_ld8s_i64:
+      case INDEX_op_ld16u_i64:
+      case INDEX_op_ld16s_i64:
+      case INDEX_op_ld32u_i64:
+      case INDEX_op_ld32s_i64:
+      case INDEX_op_ld_i64:
+				read_register_64();
+				break;
+      case INDEX_op_st8_i32:
+      case INDEX_op_st16_i32:
+      case INDEX_op_st_i32:
+				write_register_32();
+				break;
+      case INDEX_op_st8_i64:
+      case INDEX_op_st16_i64:
+      case INDEX_op_st32_i64:
+      case INDEX_op_st_i64:
+				write_register_64();
+				break;
+		}
+	}
+	return return_lj;
+}
+
+int kltrace(int search_pc) {
+	int retVal = 0;
+	block_count++;
+	retVal = gen_kltrace_insn(search_pc);
+	return retVal;
+}
 
 static inline int gen_taintcheck_insn(int search_pc)
 {
@@ -185,8 +391,8 @@ static inline int gen_taintcheck_insn(int search_pc)
   if (search_pc) {
     /* Figure out where we're starting in the metabuffers */
     metabuffer_offset = gen_old_opc_ptr - gen_opc_buf;
-   
-    /* Make our backup copies of the metadata buffers */ 
+
+    /* Make our backup copies of the metadata buffers */
     memcpy(gen_old_opc_pc, (gen_opc_pc + metabuffer_offset), sizeof(target_ulong)*(nb_opc));
     memcpy(gen_old_opc_instr_start, (gen_opc_instr_start + metabuffer_offset), sizeof(uint8_t)*(nb_opc));
     memcpy(gen_old_opc_icount, (gen_opc_icount + metabuffer_offset), sizeof(uint16_t)*(nb_opc));
@@ -196,7 +402,7 @@ static inline int gen_taintcheck_insn(int search_pc)
     memcpy(gen_old_opc_condexec_bits, (gen_opc_condexec_bits + metabuffer_offset), sizeof(uint32_t)*(nb_opc));
 #endif /* TARGET check */
 
-    memset(gen_opc_instr_start + metabuffer_offset, 0, sizeof(uint8_t) * (OPC_BUF_SIZE - metabuffer_offset)); 
+    memset(gen_opc_instr_start + metabuffer_offset, 0, sizeof(uint8_t) * (OPC_BUF_SIZE - metabuffer_offset));
   }
 
   /* Reset the ops/parms buffers */
@@ -225,7 +431,7 @@ static inline int gen_taintcheck_insn(int search_pc)
       gen_opc_cc_op[return_lj] = gen_old_opc_cc_op[opc_index];
 #elif defined(TARGET_ARM)
       gen_opc_condexec_bits[return_lj] = gen_old_opc_condexec_bits[opc_index];
-#endif /* TARGET check */ 
+#endif /* TARGET check */
     }
 
     /* Copy the opcode to be instrumented */
@@ -263,7 +469,7 @@ static inline int gen_taintcheck_insn(int search_pc)
     switch(opc)
     {
       /* The following opcodes propagate no taint */
-      case INDEX_op_end:    
+      case INDEX_op_end:
       case INDEX_op_nop:
       case INDEX_op_nop1:
       case INDEX_op_nop2:
@@ -291,9 +497,9 @@ static inline int gen_taintcheck_insn(int search_pc)
         break;
 
       case INDEX_op_call:      // Always bit taint
-        // Call is a bit different, because it has a constant arg 
-        // that comes before the input args (if any).  That constant 
-        // says how many arguments follow, since the Call op has a 
+        // Call is a bit different, because it has a constant arg
+        // that comes before the input args (if any).  That constant
+        // says how many arguments follow, since the Call op has a
         // variable number of arguments
         // [OP][# of args breakdown(const)][arg0(I/O][arg1(I/O)]...
         //    [argN(I)][# of args (const)]
@@ -481,8 +687,8 @@ static inline int gen_taintcheck_insn(int search_pc)
 
       /* Load/store operations (32 bit). */
       /* MemCheck: mkLazyN() (Just load/store taint from/to memory) */
-      case INDEX_op_qemu_ld8u: 
-      case INDEX_op_qemu_ld8s: 
+      case INDEX_op_qemu_ld8u:
+      case INDEX_op_qemu_ld8s:
       case INDEX_op_qemu_ld16u:
       case INDEX_op_qemu_ld16s:
 #if TCG_TARGET_REG_BITS == 64
@@ -584,7 +790,7 @@ static inline int gen_taintcheck_insn(int search_pc)
                 t1 = tcg_temp_new_i32();
                 t2 = tcg_temp_new_i32();
                 t3 = tcg_temp_new_i32();
- 
+
                 /* Load taint from tempidx */
                 tcg_gen_ld_i32(t2, cpu_env, offsetof(OurCPUState,tempidx));
                 tcg_gen_ld_i32(t3, cpu_env, offsetof(OurCPUState, tempidx2));
@@ -608,7 +814,7 @@ static inline int gen_taintcheck_insn(int search_pc)
                 if (arg1)
                   tcg_gen_ld_i32(arg1, cpu_env, offsetof(OurCPUState,tempidx2));
               }
-            }  /* taint_pointers_enabled */ 
+            }  /* taint_pointers_enabled */
             else {
               /* Patch in opcode to load taint from tempidx */
               if (arg0)
@@ -658,11 +864,11 @@ static inline int gen_taintcheck_insn(int search_pc)
       case INDEX_op_qemu_st32:
         //DUMMY_TAINT(nb_oargs, nb_args);
         //break;
- 
+
       case INDEX_op_qemu_st8:
       case INDEX_op_qemu_st16:
 #else
-      case INDEX_op_qemu_st8: 
+      case INDEX_op_qemu_st8:
       case INDEX_op_qemu_st16:
       case INDEX_op_qemu_st32:
 #endif // AWH
@@ -687,7 +893,7 @@ static inline int gen_taintcheck_insn(int search_pc)
                 t0 = tcg_temp_new_i64();
                 t1 = tcg_temp_new_i64();
                 t2 = tcg_temp_new_i64();
-                
+
                 /* Check for pointer taint */
                 t_zero = tcg_temp_new_i64();
                 tcg_gen_movi_i64(t_zero, 0);
@@ -722,7 +928,7 @@ static inline int gen_taintcheck_insn(int search_pc)
             gen_opc_ptr++;
             gen_opparam_ptr += 3;
             gen_opc_ptr[-1] = ir + (INDEX_op_taint_qemu_ld8u - INDEX_op_qemu_ld8u);
-            gen_opparam_ptr[-1] = mem_index; 
+            gen_opparam_ptr[-1] = mem_index;
             gen_opparam_ptr[-2] = addr;
             gen_opparam_ptr[-3] = ret;
           }
@@ -849,7 +1055,7 @@ static inline int gen_taintcheck_insn(int search_pc)
                 //tcg_temp_free_i32(t0);
               } else
                 tcg_gen_st_tl(arg0, cpu_env, offsetof(OurCPUState,tempidx));
-             
+
               if (!arg1) {
                 t0 = tcg_temp_new_i32();
                 tcg_gen_movi_i32(t0, 0);
@@ -923,7 +1129,7 @@ static inline int gen_taintcheck_insn(int search_pc)
         break;
 
       /* IN MEMCHECK (VALGRIND), LOOK AT: memcheck/mc_translate.c
-         expr2vbits_Binop(), expr2vbits_Unop() */ 
+         expr2vbits_Binop(), expr2vbits_Unop() */
       case INDEX_op_shl_i32: // Special - scalarShift()
         arg0 = find_shadow_arg(gen_opparam_ptr[-3]);
         if (arg0) {
@@ -951,7 +1157,7 @@ static inline int gen_taintcheck_insn(int search_pc)
           t1 = tcg_temp_new_i32();
           t2 = tcg_temp_new_i32();
 
-          if (arg2) { 
+          if (arg2) {
             // Check if the shift amount (arg2) is tainted.  If so, the
             // entire result will be tainted.
             t_zero = tcg_temp_new_i32();
@@ -1000,7 +1206,7 @@ static inline int gen_taintcheck_insn(int search_pc)
           t1 = tcg_temp_new_i32();
           t2 = tcg_temp_new_i32();
 
-          if (arg2) { 
+          if (arg2) {
             // Check if the shift amount (arg2) is tainted.  If so, the
             // entire result will be tainted.
             t_zero = tcg_temp_new_i32();
@@ -1049,7 +1255,7 @@ static inline int gen_taintcheck_insn(int search_pc)
           t1 = tcg_temp_new_i32();
           t2 = tcg_temp_new_i32();
 
-          if (arg2) { 
+          if (arg2) {
             // Check if the shift amount (arg2) is tainted.  If so, the
             // entire result will be tainted.
             t_zero = tcg_temp_new_i32();
@@ -1099,7 +1305,7 @@ static inline int gen_taintcheck_insn(int search_pc)
           t1 = tcg_temp_new_i32();
           t2 = tcg_temp_new_i32();
 
-          if (arg2) { 
+          if (arg2) {
             // Check if the shift amount (arg2) is tainted.  If so, the
             // entire result will be tainted.
             t_zero = tcg_temp_new_i32();
@@ -1147,7 +1353,7 @@ static inline int gen_taintcheck_insn(int search_pc)
           t1 = tcg_temp_new_i32();
           t2 = tcg_temp_new_i32();
 
-          if (arg2) { 
+          if (arg2) {
             // Check if the shift amount (arg2) is tainted.  If so, the
             // entire result will be tainted.
             t_zero = tcg_temp_new_i32();
@@ -1192,7 +1398,7 @@ static inline int gen_taintcheck_insn(int search_pc)
           gen_opparam_ptr -= 3;
           gen_opc_ptr--;
 
-          
+
           //LOK: Declared the new temporary variables that we need
           t0 = tcg_temp_new_i32(); //scratch
           t1 = tcg_temp_new_i32(); //a_min
@@ -1209,7 +1415,7 @@ static inline int gen_taintcheck_insn(int search_pc)
           //LOK: First lets calculate a_min = aa & ~qaa
           tcg_gen_not_i32(t0, arg1); // ~qaa
           tcg_gen_and_i32(t1, orig1, t0);//t1 = aa & ~qaa
-          
+
           //LOK: Then calculate b_min
           tcg_gen_not_i32(t0, arg2); // ~qbb
           tcg_gen_and_i32(t2, orig2, t0);//t2 = bb & ~qbb
@@ -1269,7 +1475,7 @@ static inline int gen_taintcheck_insn(int search_pc)
           //LOK: First lets calculate a_min = aa & ~qaa
           tcg_gen_not_i32(t0, arg1); // ~qaa
           tcg_gen_and_i32(t1, orig1, t0);//t1 = aa & ~qaa
-          
+
           //LOK: Then calculate b_min
           tcg_gen_not_i32(t0, arg2); // ~qbb
           tcg_gen_and_i32(t2, orig2, t0);//t2 = bb & ~qbb
@@ -1326,9 +1532,9 @@ static inline int gen_taintcheck_insn(int search_pc)
             tcg_gen_movi_i32(t0, arg1);
           else if (arg2)
             tcg_gen_movi_i32(t0, arg2);
-   
+
           // mkLeft32(t0)
-          t1 = tcg_temp_new_i32(); 
+          t1 = tcg_temp_new_i32();
           tcg_gen_neg_i32(t1, t0); // (-s32)
           tcg_gen_or_i32(arg0, t0, t1); // (s32 | (-s32)) -> vLo32
           /* Reinsert original opcode */
@@ -1343,7 +1549,7 @@ static inline int gen_taintcheck_insn(int search_pc)
         1      X      AND 1      X       1
         ... otherwise, ResultingTaint = 0
         AND: ((NOT T1) * V1 * T2) + (T1 * (NOT T2) * V2) + (T1 * T2)
-      */  
+      */
       case INDEX_op_and_i32: // Special - and_or_ty()
         arg0 = find_shadow_arg(gen_opparam_ptr[-3]);
         if (arg0) {
@@ -1455,7 +1661,7 @@ static inline int gen_taintcheck_insn(int search_pc)
             tcg_gen_movi_i32(t1, 0);
 
           if (arg1 && arg2)
-            tcg_gen_and_i32(t2, arg1, arg2); // T1 * T2 
+            tcg_gen_and_i32(t2, arg1, arg2); // T1 * T2
           else if (arg1)
             tcg_gen_mov_i32(t2, arg1);
           else if (arg2)
@@ -1506,7 +1712,7 @@ static inline int gen_taintcheck_insn(int search_pc)
           t2 = tcg_temp_new_i32();
           t_zero = tcg_temp_new_i32();
           tcg_gen_movi_i32(t_zero, 0);
-          tcg_gen_setcond_i32(TCG_COND_NE, t2, t_zero, t0); 
+          tcg_gen_setcond_i32(TCG_COND_NE, t2, t_zero, t0);
           tcg_gen_neg_i32(arg0, t2);
         }
         break;
@@ -1517,12 +1723,12 @@ static inline int gen_taintcheck_insn(int search_pc)
         if (arg0 && arg1) {
           arg2 = find_shadow_arg(gen_opparam_ptr[-2]);
           arg3 = find_shadow_arg(gen_opparam_ptr[-1]);
-     
+
           orig0 = gen_opparam_ptr[-4];
           orig1 = gen_opparam_ptr[-3];
           orig2 = gen_opparam_ptr[-2];
           orig3 = gen_opparam_ptr[-1];
- 
+
           if (arg2 && arg3) {
             t0 = tcg_temp_new_i32();
             tcg_gen_or_i32(t0, arg2, arg3);
@@ -1575,7 +1781,7 @@ static inline int gen_taintcheck_insn(int search_pc)
           t2 = tcg_temp_new_i32();
           t3 = tcg_temp_new_i32();
 
-          // Combine high/low taint of Input 1 into t2               
+          // Combine high/low taint of Input 1 into t2
           if (arg2 && arg3)
             tcg_gen_or_i32(t2, arg2, arg3);
           else if (arg2)
@@ -1636,11 +1842,11 @@ static inline int gen_taintcheck_insn(int search_pc)
         if (arg0) {
           arg1 = find_shadow_arg(gen_opparam_ptr[-2]);
           arg2 = find_shadow_arg(gen_opparam_ptr[-1]);
-        
+
           orig0 = gen_opparam_ptr[-3];
           orig1 = gen_opparam_ptr[-2];
           orig2 = gen_opparam_ptr[-1];
-  
+
           if (arg1 && arg2) {
             t0 = tcg_temp_new_i32();
             tcg_gen_or_i32(t0, arg1, arg2);
@@ -2052,11 +2258,11 @@ static inline int gen_taintcheck_insn(int search_pc)
             tcg_gen_movi_i64(arg0, 0);
             break;
           }
-          
+
           t0 = tcg_temp_new_i64();
           t1 = tcg_temp_new_i64();
           t2 = tcg_temp_new_i64();
-          
+
           if (arg2) {
             // Check if the shift amount (arg2) is tainted.  If so, the
             // entire result will be tainted.
@@ -2065,7 +2271,7 @@ static inline int gen_taintcheck_insn(int search_pc)
             tcg_gen_neg_i64(t2, t1);
           } else
             tcg_gen_movi_i64(t2, 0);
-        
+
           if (arg1) {
             // Perform the ROTL on arg1
         	  tcg_gen_rotr_i64(t0, arg1, orig0);//tcg_gen_rotr_i64(t0, arg1, gen_opparam_ptr[-1]);
@@ -2112,7 +2318,7 @@ static inline int gen_taintcheck_insn(int search_pc)
           //LOK: First lets calculate a_min = aa & ~qaa
           tcg_gen_not_i64(t0, arg1); // ~qaa
           tcg_gen_and_i64(t1, orig1, t0);//t1 = aa & ~qaa
-          
+
           //LOK: Then calculate b_min
           tcg_gen_not_i64(t0, arg2); // ~qbb
           tcg_gen_and_i64(t2, orig2, t0);//t2 = bb & ~qbb
@@ -2157,7 +2363,7 @@ static inline int gen_taintcheck_insn(int search_pc)
           //delete the original operation
           gen_opparam_ptr -= 3;
           gen_opc_ptr--;
-         
+
           //LOK: Declared the new temporary variables that we need
           t0 = tcg_temp_new_i64(); //scratch
           t1 = tcg_temp_new_i64(); //a_min
@@ -2174,7 +2380,7 @@ static inline int gen_taintcheck_insn(int search_pc)
           //LOK: First lets calculate a_min = aa & ~qaa
           tcg_gen_not_i64(t0, arg1); // ~qaa
           tcg_gen_and_i64(t1, orig1, t0);//t1 = aa & ~qaa
-          
+
           //LOK: Then calculate b_min
           tcg_gen_not_i64(t0, arg2); // ~qbb
           tcg_gen_and_i64(t2, orig2, t0);//t2 = bb & ~qbb
@@ -2333,7 +2539,7 @@ static inline int gen_taintcheck_insn(int search_pc)
             tcg_gen_movi_i64(t1, 0);
 
           if (arg1 && arg2)
-            tcg_gen_and_i64(t2, arg1, arg2); // T1 * T2 
+            tcg_gen_and_i64(t2, arg1, arg2); // T1 * T2
           else if (arg1)
             tcg_gen_mov_i64(t2, arg1);
           else if (arg2)
@@ -2431,7 +2637,7 @@ static inline int gen_taintcheck_insn(int search_pc)
         if (arg0) {
           arg1 = find_shadow_arg(gen_opparam_ptr[-2]);
           arg2 = find_shadow_arg(gen_opparam_ptr[-1]);
-    
+
           if (!arg1 && !arg2) {
             tcg_gen_movi_i64(arg0, 0);
             break;
@@ -2704,7 +2910,7 @@ static inline int gen_taintcheck_insn(int search_pc)
         fprintf(stderr, "gen_taintcheck_insn() -> UNKNOWN %d (%s)\n", opc, tcg_op_defs[opc].name);
         fprintf(stderr, "(%s)\n", (tcg_op_defs[opc]).name);
         assert(1==0);
-        break;  
+        break;
     } /* End switch */
   } /* End taint while loop */
 
@@ -2716,7 +2922,7 @@ static inline int gen_taintcheck_insn(int search_pc)
 
 int optimize_taint(int search_pc) {
 int retVal;
-#ifdef USE_TCG_OPTIMIZATIONS    
+#ifdef USE_TCG_OPTIMIZATIONS
     if (unlikely(qemu_loglevel_mask(CPU_LOG_TB_OP_OPT))) {
         qemu_log("OP partial buffer before optimization:\n");
         tcg_dump_ops(&tcg_ctx, logfile);
@@ -2729,9 +2935,9 @@ int retVal;
     build_liveness_metadata(&tcg_ctx);
 #endif // AWH
 #endif
-    block_count++;    
+    block_count++;
     if (unlikely(qemu_loglevel_mask(
-      CPU_LOG_TB_OUT_ASM | CPU_LOG_TB_IN_ASM | 
+      CPU_LOG_TB_OUT_ASM | CPU_LOG_TB_IN_ASM |
       CPU_LOG_TB_OP | CPU_LOG_TB_OP_OPT)) )
     {
       qemu_log("------------ BEGIN BLOCK %u ---------------------\n", block_count);
@@ -2795,7 +3001,7 @@ static void build_liveness_metadata(TCGContext *s)
                         if (!dead_temps[arg])
                             goto do_not_remove_call;
                     }
-                    /* Mark the liveness metadata that this will be 
+                    /* Mark the liveness metadata that this will be
                        eliminated during liveness checks */
                     gen_old_liveness_metadata[op_index] = 0;
 //fprintf(stderr, "Setting opc index: %d as dead\n", op_index);
@@ -2866,7 +3072,7 @@ static void build_liveness_metadata(TCGContext *s)
                     if (!dead_temps[arg])
                         goto do_not_remove;
                 }
-                /* Mark the liveness metadata that this will be 
+                /* Mark the liveness metadata that this will be
                    eliminated during liveness checks */
                 gen_old_liveness_metadata[op_index] = 0;
 //fprintf(stderr, "Setting opc index: %d as dead\n", op_index);
@@ -2913,5 +3119,3 @@ static void build_liveness_metadata(TCGContext *s)
         tcg_abort();
 }
 #endif /* USE_TCG_OPTIMIZATIONS */
-#endif /* CONFIG_TCG_TAINT */
-
