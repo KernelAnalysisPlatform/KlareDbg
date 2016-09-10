@@ -35,10 +35,10 @@ extern "C"
 void do_guest_ps(Monitor *mon);
 void do_guest_modules(Monitor *mon, const QDict *qdict);
 void do_toggle_kvm(Monitor *mon, const QDict *qdict);
+void do_module_info(Monitor *mon, const QDict *qdict);
 
 void do_print_modules(Monitor *mon);
 void print_loaded_modules(CPUState *env);
-
 
 
 #ifdef __cplusplus

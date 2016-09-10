@@ -72,8 +72,8 @@ extern int DECAF_unregisterOptimizedBlockBeginCallback(DECAF_Handle handle);
 extern int DECAF_unregisterOptimizedBlockEndCallback(DECAF_Handle handle);
 
 extern DECAF_errno_t DECAF_unregisterOpcodeRangeCallbacks(DECAF_Handle handle);
-extern void helper_DECAF_invoke_register_read_callback(CPUState *env, long offset, target_ulong value); //KLDBG:
-extern void helper_DECAF_invoke_register_write_callback(CPUState *env, long offset, target_ulong value); //KLDBG:
+extern void helper_DECAF_invoke_register_read_callback(CPUState *env, long offset, target_ulong value, int size); //KLDBG:
+extern void helper_DECAF_invoke_register_write_callback(CPUState *env, long offset, target_ulong value, int size); //KLDBG:
 extern void helper_DECAF_invoke_block_begin_callback(CPUState* env, TranslationBlock* tb);
 extern void helper_DECAF_invoke_block_end_callback(CPUState* env, TranslationBlock* tb, gva_t from);
 extern void helper_DECAF_invoke_insn_begin_callback(CPUState* env);

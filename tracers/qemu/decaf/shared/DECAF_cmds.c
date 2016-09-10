@@ -17,6 +17,9 @@ http://code.google.com/p/decaf-platform/
 #include "DECAF_cmds.h"
 #include "vmi_c_wrapper.h"
 
+extern target_ulong mod_addr;
+extern target_ulong mod_size;
+int dtainted = 0;
 void do_guest_ps(Monitor *mon)
 {
  VMI_list_processes(mon);
@@ -42,8 +45,8 @@ void do_guest_modules(Monitor *mon, const QDict *qdict)
   if (qdict_haskey(qdict, "pid"))
   {
     pid = qdict_get_int(qdict, "pid");
-  }    
- 
+  }
+
   if (pid == -1)
   {
     monitor_printf(mon, "need a pid\n");
@@ -70,3 +73,12 @@ void do_toggle_kvm(Monitor *mon, const QDict *qdict)
 
 }
 
+void do_module_info(Monitor *mon, const QDict *qdict)
+{
+  const char *buf;
+  buf = qdict_get_str(qdict, "addr");
+  sscanf(buf, "0x%lx", &mod_addr);
+  mod_size = qdict_get_int(qdict, "size");
+  monitor_printf(mon, "now start tracking of module: %016lx(%d)\n", mod_addr, mod_size);
+  dtainted = 1;
+}

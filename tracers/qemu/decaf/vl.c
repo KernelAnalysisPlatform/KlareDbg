@@ -167,6 +167,7 @@ int main(int argc, char **argv)
 
 #include "ui/qemu-spice.h"
 #include "shared/DECAF_main_internal.h" // AWH
+
 //#define DEBUG_NET
 //#define DEBUG_SLIRP
 
@@ -238,6 +239,7 @@ uint8_t *boot_splash_filedata;
 int boot_splash_filedata_size;
 uint8_t qemu_extra_params_fw[2];
 
+extern int GLOBAL_parent_id, GLOBAL_id;
 typedef struct FWBootEntry FWBootEntry;
 
 struct FWBootEntry {
@@ -3518,6 +3520,10 @@ int main(int argc, char **argv, char **envp)
         do_load_plugin(cur_mon, plugin_path, &data);
     }
 #endif // AWH
+
+    // KLDBG:
+    if (GLOBAL_id == -1) { GLOBAL_id = get_next_id(); }
+    init_QIRA();
 
     if (loadvm) {
 	// AWH - TODO: Handle all of the command line options here

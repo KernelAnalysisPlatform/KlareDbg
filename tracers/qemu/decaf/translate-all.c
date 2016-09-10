@@ -30,7 +30,7 @@
 #ifdef CONFIG_TCG_TAINT
 #include "tcg-op.h"
 #include "tainting/taint_memory.h"
-#include "tainting/tcg_taint.h"
+#include "kltrace.h"
 #else
 #include "tcg.h"
 #endif /* CONFIG_TCG_TAINT */
@@ -50,6 +50,8 @@ void cpu_gen_init(void)
 {
     tcg_context_init(&tcg_ctx); 
 }
+extern target_ulong mod_addr;
+extern target_ulong mod_size;
 
 /* return non zero if the very first instruction is invalid so that
    the virtual CPU can trigger an exception.
@@ -109,10 +111,12 @@ int cpu_gen_code(CPUState *env, TranslationBlock *tb, int *gen_code_size_ptr)
 
 #ifdef DEBUG_DISAS
     if (qemu_loglevel_mask(CPU_LOG_TB_OUT_ASM)) {
+//if (mod_addr <= env->eip && env->eip < mod_addr + mod_size) {
         qemu_log("OUT: [size=%d]\n", *gen_code_size_ptr);
         log_disas(tb->tc_ptr, *gen_code_size_ptr);
         qemu_log("\n");
         qemu_log_flush();
+//}
     }
 #endif
     return 0;

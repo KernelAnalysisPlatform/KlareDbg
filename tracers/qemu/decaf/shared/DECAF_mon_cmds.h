@@ -36,20 +36,20 @@ http://code.google.com/p/decaf-platform/
 	.name		= "guest_ps|ps",
 	.args_type	= "",
 	.mhandler.info	= do_guest_ps,
-	.params		= "", 
+	.params		= "",
 	.help		= "list the processes on guest system"
 },
 {
 	.name		= "lsmod",
 	.args_type	= "",
 	.mhandler.info	= do_print_modules,
-	.params 	= "", 
+	.params 	= "",
 	.help		= "list the loaded kernel modules"
 },
 
 {
-	.name		= "guest_modules", 
-	.args_type	= "pid:i", 
+	.name		= "guest_modules",
+	.args_type	= "pid:i",
 	.mhandler.cmd	= do_guest_modules,
 	.params		= "pid",
 	.help		= "list the modules of the process with <pid>"
@@ -63,12 +63,20 @@ http://code.google.com/p/decaf-platform/
 	.help		= "turn kvm on or off at runtime"
 },
 
+{
+	.name		= "module_info",
+	.args_type	= "addr:F,size:i",
+	.mhandler.cmd	= do_module_info,
+	.params		= "addr size",
+	.help		= "specify address and size of module"
+},
+
 #if 0 //To be removed
 {
 	.name		= "linux_ps",
-	.args_type	= "mmap_flag:i?", 
+	.args_type	= "mmap_flag:i?",
 	.mhandler.cmd	= do_linux_ps,
-	.params		= "[mmap_flag]", 
+	.params		= "[mmap_flag]",
 	.help		= "list the processes on linux guest system (default: mmap_flag = 1)"
 },
 #endif
@@ -132,4 +140,3 @@ http://code.google.com/p/decaf-platform/
         .mhandler.cmd_new = do_taint_pointers,
 },
 #endif /* CONFIG_TCG_TAINT */
-

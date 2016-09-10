@@ -28,6 +28,7 @@ http://code.google.com/p/decaf-platform/
 #include "shared/DECAF_callback.h"
 #include "shared/DECAF_callback_to_QEMU.h"
 #include "shared/utils/HashtableWrapper.h"
+#include "tcg_track.h"
 #if 0 // AWH
 #define PUSH_ALL() __asm__ __volatile__ ("push %rax"); \
 __asm__ __volatile__ ("push %rbx"); \
@@ -736,44 +737,59 @@ void DECAF_invoke_tlb_exec_callback(CPUState *env, gva_t vaddr)
 		  }
 	  }
 }
+extern int dtainted;
 /* KLDBG: */
-void helper_DECAF_invoke_register_read_callback(CPUState *env, long offset, target_ulong value)
+void helper_DECAF_invoke_register_read_callback(CPUState *env, long offset, target_ulong value, int size)
 {
-	static callback_struct_t *cb_struct, *cb_temp;
-	static DECAF_Callback_Params params;
-	params.rr.base = env;
-	params.rr.offset = offset;
-	params.rr.value = value;
-	//printf("[read] env:%lx, offset:%ld, value: %d\n", env, offset, value);
-PUSH_ALL()
-	LIST_FOREACH_SAFE(cb_struct, &callback_list_heads[DECAF_REG_READ_CB], link, cb_temp)
-	{
-		// If it is a global callback or it is within the execution context,
-		// invoke this callback
-        params.cbhandle = (DECAF_Handle)cb_struct;
-		if (!cb_struct->enabled || *cb_struct->enabled)
-			cb_struct->callback(&params);
-	}
-  POP_ALL()
+// 	static callback_struct_t *cb_struct, *cb_temp;
+// 	static DECAF_Callback_Params params;
+// 	params.rr.base = env;
+// 	params.rr.offset = offset;
+// 	params.rr.value = value;
+//
+// PUSH_ALL()
+// 	LIST_FOREACH_SAFE(cb_struct, &callback_list_heads[DECAF_REG_READ_CB], link, cb_temp)
+// 	{
+// 		// If it is a global callback or it is within the execution context,
+// 		// invoke this callback
+//         params.cbhandle = (DECAF_Handle)cb_struct;
+// 		if (!cb_struct->enabled || *cb_struct->enabled)
+// 			cb_struct->callback(&params);
+// 	}
+//   POP_ALL()
+	//track_read((target_ulong)env, offset, value, size);
+	// if (dtainted) {
+	// 	printf("[read] eip:%lx, env:%lx, offset:%ld, value: %d\n", env->eip, env, offset, value);
+	// }
+	//if (IN_MOD(env->eip)) {
+		printf("[read] env:%lx, offset:%lx, value: %lx\n", env, offset, value);
+	//}
 	return;
 }
-void helper_DECAF_invoke_register_write_callback(CPUState *env, long offset, target_ulong value)
+void helper_DECAF_invoke_register_write_callback(CPUState *env, long offset, target_ulong value, int size)
 {
-	static callback_struct_t *cb_struct, *cb_temp;
-	static DECAF_Callback_Params params;
-	params.rw.base = env;
-	params.rw.offset = offset;
-	params.rw.value = value;
-PUSH_ALL()
-	LIST_FOREACH_SAFE(cb_struct, &callback_list_heads[DECAF_REG_WRITE_CB], link, cb_temp)
-	{
-		// If it is a global callback or it is within the execution context,
-		// invoke this callback
-        params.cbhandle = (DECAF_Handle)cb_struct;
-		if (!cb_struct->enabled || *cb_struct->enabled)
-			cb_struct->callback(&params);
-	}
-  POP_ALL()
+// 	static callback_struct_t *cb_struct, *cb_temp;
+// 	static DECAF_Callback_Params params;
+// 	params.rw.base = env;
+// 	params.rw.offset = offset;
+// 	params.rw.value = value;
+// PUSH_ALL()
+// 	LIST_FOREACH_SAFE(cb_struct, &callback_list_heads[DECAF_REG_WRITE_CB], link, cb_temp)
+// 	{
+// 		// If it is a global callback or it is within the execution context,
+// 		// invoke this callback
+//         params.cbhandle = (DECAF_Handle)cb_struct;
+// 		if (!cb_struct->enabled || *cb_struct->enabled)
+// 			cb_struct->callback(&params);
+// 	}
+//   POP_ALL()
+	//track_write((target_ulong)env, offset, value, size);
+	// if (dtainted) {
+	// 	printf("[read] eip:%lx, env:%lx, offset:%ld, value: %d\n", env->eip, env, offset, value);
+	// }
+	//if (IN_MOD(env->eip)) {
+		printf("[write] env:%lx, offset:%lx, value: %lx\n", env, offset, value);
+	//}
 	return;
 }
 
@@ -1031,49 +1047,55 @@ void helper_DECAF_invoke_keystroke_callback(int keycode,uint32_t *taint_mark)
 void helper_DECAF_invoke_mem_read_callback(gva_t virt_addr,gpa_t phy_addr, unsigned long value, DATA_TYPE data_type)
 {
 
-  static callback_struct_t *cb_struct, *cb_temp;
-  static DECAF_Callback_Params params;
-  params.mr.dt=data_type;
-  params.mr.paddr=phy_addr;
-  params.mr.vaddr=virt_addr;
-  params.mr.value = value;
-  //if (cpu_single_env == 0) return;
-PUSH_ALL()
-  //FIXME: not thread safe
-  LIST_FOREACH_SAFE(cb_struct, &callback_list_heads[DECAF_MEM_READ_CB], link, cb_temp)
-  {
-    // If it is a global callback or it is within the execution context,
-    // invoke this callback
-      params.cbhandle = (DECAF_Handle)cb_struct;
-    if (!cb_struct->enabled || *cb_struct->enabled) {
-      cb_struct->callback(&params);
-    }
-  }
-POP_ALL()
+//   static callback_struct_t *cb_struct, *cb_temp;
+//   static DECAF_Callback_Params params;
+//   params.mr.dt=data_type;
+//   params.mr.paddr=phy_addr;
+//   params.mr.vaddr=virt_addr;
+//   params.mr.value = value;
+//   //if (cpu_single_env == 0) return;
+// PUSH_ALL()
+//   //FIXME: not thread safe
+//   LIST_FOREACH_SAFE(cb_struct, &callback_list_heads[DECAF_MEM_READ_CB], link, cb_temp)
+//   {
+//     // If it is a global callback or it is within the execution context,
+//     // invoke this callback
+//       params.cbhandle = (DECAF_Handle)cb_struct;
+//     if (!cb_struct->enabled || *cb_struct->enabled) {
+//       cb_struct->callback(&params);
+//     }
+//   }
+// POP_ALL()
+	if (IN_MOD(cpu_single_env->eip)) {
+		printf("[read] virt_addr:%lx, value:%lu\n", virt_addr, value);
+	}
 }
 
 void helper_DECAF_invoke_mem_write_callback(gva_t virt_addr,gpa_t phy_addr,unsigned long value, DATA_TYPE data_type)
 {
 
-	static callback_struct_t *cb_struct, *cb_temp;
-	static DECAF_Callback_Params params;
-	params.mw.dt=data_type;
-	params.mw.paddr=phy_addr;
-	params.mw.vaddr=virt_addr;
-  params.mw.value = value;
-PUSH_ALL()
-	//if (cpu_single_env == 0) return;
-
-	//FIXME: not thread safe
-	LIST_FOREACH_SAFE(cb_struct, &callback_list_heads[DECAF_MEM_WRITE_CB], link, cb_temp)
-	{
-		// If it is a global callback or it is within the execution context,
-		// invoke this callback
-        params.cbhandle = (DECAF_Handle)cb_struct;
-		if (!cb_struct->enabled || *cb_struct->enabled)
-			cb_struct->callback(&params);
+// 	static callback_struct_t *cb_struct, *cb_temp;
+// 	static DECAF_Callback_Params params;
+// 	params.mw.dt=data_type;
+// 	params.mw.paddr=phy_addr;
+// 	params.mw.vaddr=virt_addr;
+//   params.mw.value = value;
+// PUSH_ALL()
+// 	//if (cpu_single_env == 0) return;
+//
+// 	//FIXME: not thread safe
+// 	LIST_FOREACH_SAFE(cb_struct, &callback_list_heads[DECAF_MEM_WRITE_CB], link, cb_temp)
+// 	{
+// 		// If it is a global callback or it is within the execution context,
+// 		// invoke this callback
+//         params.cbhandle = (DECAF_Handle)cb_struct;
+// 		if (!cb_struct->enabled || *cb_struct->enabled)
+// 			cb_struct->callback(&params);
+// 	}
+//   POP_ALL()
+	if (IN_MOD(cpu_single_env->eip)) {
+		printf("[write] virt_addr:%lx, value:%lu\n", virt_addr, value);
 	}
-  POP_ALL()
 }
 
 void helper_DECAF_invoke_nic_rec_callback(const uint8_t * buf,int size,int cur_pos,int start,int stop)

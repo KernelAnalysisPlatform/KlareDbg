@@ -142,7 +142,7 @@ print_insn_thumb1(bfd_vma pc, disassemble_info *info)
     ppc  - nonzero means little endian
     other targets - unused
  */
-void target_disas(FILE *out, target_ulong code, target_ulong size, int flags)
+void real_target_disas(FILE *out, target_ulong code, target_ulong size, int flags)
 {
     target_ulong pc;
     int count;
@@ -227,7 +227,7 @@ void target_disas(FILE *out, target_ulong code, target_ulong size, int flags)
 #endif
 
     for (pc = code; size > 0; pc += count, size -= count) {
-	fprintf(out, "0x" TARGET_FMT_lx ":  ", pc);
+	fprintf(out, "0x%016lx: ", pc);
 	count = print_insn(pc, &disasm_info);
 #if 0
         {

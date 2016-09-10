@@ -102,49 +102,49 @@ static void rld_cb(unsigned long offset) {
 /* AWH - Memory callback logic to be called via TCG calls */
 static void REGPARM ldb_cb(unsigned long addr, gva_t vaddr) {
   //fprintf(stderr, "ldb_cb: %lx %lx\n", addr, vaddr);
-  if(DECAF_is_callback_needed(DECAF_MEM_READ_CB))
+  //if(DECAF_is_callback_needed(DECAF_MEM_READ_CB))
     helper_DECAF_invoke_mem_read_callback(vaddr,qemu_ram_addr_from_host_nofail((void *)(addr)), *(uint8_t *) addr, 1);
 }
 
 static void REGPARM ldw_cb(unsigned long addr, gva_t vaddr) {
 //fprintf(stderr, "ldw_cb: %08x %08x\n", addr, vaddr);
-  if(DECAF_is_callback_needed(DECAF_MEM_READ_CB))
+  //if(DECAF_is_callback_needed(DECAF_MEM_READ_CB))
     helper_DECAF_invoke_mem_read_callback(vaddr,qemu_ram_addr_from_host_nofail((void *)(addr)),*(uint16_t *) addr, 2);
 }
 
 static void REGPARM ldl_cb(unsigned long addr, gva_t vaddr) {
 //fprintf(stderr, "ldl_cb: %08x %08x\n", addr, vaddr);
-  if(DECAF_is_callback_needed(DECAF_MEM_READ_CB))
+  //if(DECAF_is_callback_needed(DECAF_MEM_READ_CB))
     helper_DECAF_invoke_mem_read_callback(vaddr,qemu_ram_addr_from_host_nofail((void *)(addr)), *(uint32_t *) addr, 4);
 }
 
 static void REGPARM ldq_cb(unsigned long addr, gva_t vaddr) {
 //fprintf(stderr, "ldq_cb: %08x %08x\n", addr, vaddr);
-  if(DECAF_is_callback_needed(DECAF_MEM_READ_CB))
+  //if(DECAF_is_callback_needed(DECAF_MEM_READ_CB))
     helper_DECAF_invoke_mem_read_callback(vaddr,qemu_ram_addr_from_host_nofail((void *)(addr)), *(uint64_t *) addr, 8);
 }
 
 static void REGPARM stb_cb(unsigned long addr, gva_t vaddr,unsigned long value) {
 //fprintf(stderr, "stb_cb: %08x %08x\n", addr, vaddr);
-  if(DECAF_is_callback_needed(DECAF_MEM_WRITE_CB))
+  //if(DECAF_is_callback_needed(DECAF_MEM_WRITE_CB))
     helper_DECAF_invoke_mem_write_callback(vaddr,qemu_ram_addr_from_host_nofail((void *)(addr)),value & 0xFF,1);
 }
 
 static void REGPARM stw_cb(unsigned long addr, gva_t vaddr,unsigned long value) {
 //fprintf(stderr, "stw_cb: %08x %08x\n", addr, vaddr);
-  if(DECAF_is_callback_needed(DECAF_MEM_WRITE_CB))
+  //if(DECAF_is_callback_needed(DECAF_MEM_WRITE_CB))
     helper_DECAF_invoke_mem_write_callback(vaddr,qemu_ram_addr_from_host_nofail((void *)(addr)),value & 0xFFFF,2);
 }
 
 static void REGPARM stl_cb(unsigned long addr, gva_t vaddr,unsigned long value) {
 //fprintf(stderr, "stl_cb: %08x %08x\n", addr, vaddr);
-  if(DECAF_is_callback_needed(DECAF_MEM_WRITE_CB))
+  //if(DECAF_is_callback_needed(DECAF_MEM_WRITE_CB))
     helper_DECAF_invoke_mem_write_callback(vaddr,qemu_ram_addr_from_host_nofail((void *)(addr)), value & 0xFFFFFFFF,4);
 }
 
 static void REGPARM stq_cb(unsigned long addr, gva_t vaddr, unsigned long value) {
 //fprintf(stderr, "stq_cb: %08x %08x\n", addr, vaddr);
-  if(DECAF_is_callback_needed(DECAF_MEM_WRITE_CB))
+  //if(DECAF_is_callback_needed(DECAF_MEM_WRITE_CB))
     helper_DECAF_invoke_mem_write_callback(vaddr,qemu_ram_addr_from_host_nofail((void *)(addr)), value,8);
 }
 

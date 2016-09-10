@@ -8083,6 +8083,9 @@ static inline void log_tcg_ir(TranslationBlock *tb, target_ulong pc_ptr, target_
 }
 #endif /* CONFIG_TCG_IR_LOG */
 
+extern target_ulong mod_addr;
+extern target_ulong mod_size;
+
 /* generate intermediate code in gen_opc_buf and gen_opparam_buf for
    basic block 'tb'. If search_pc is TRUE, also generate PC
    information for each intermediate instruction. */
@@ -8209,7 +8212,8 @@ static inline void gen_intermediate_code_internal(CPUState *env,
                     log_tcg_ir(tb, pc_ptr, pc_start);
 #endif /* CONFIG_TCG_IR_LOG */
                     /* KLDBG: */
-                    lj = kltrace(search_pc);
+                    if (mod_addr <= tb->pc && tb->pc < mod_addr + mod_size)
+                      lj = kltrace(&tcg_ctx, search_pc);
 #ifdef CONFIG_TCG_TAINT
                     if (taint_tracking_enabled)
                         lj = optimize_taint(search_pc);
@@ -8252,7 +8256,8 @@ static inline void gen_intermediate_code_internal(CPUState *env,
             log_tcg_ir(tb, pc_ptr, pc_start);
 #endif /* CONFIG_TCG_IR_LOG */
             /* KLDBG: */
-            lj = kltrace(search_pc);
+          if (mod_addr <= tb->pc && tb->pc < mod_addr + mod_size)
+            lj = kltrace(&tcg_ctx, search_pc);
 #ifdef CONFIG_TCG_TAINT
             if (taint_tracking_enabled)
                 lj = optimize_taint(search_pc);
@@ -8277,7 +8282,8 @@ static inline void gen_intermediate_code_internal(CPUState *env,
             log_tcg_ir(tb, pc_ptr, pc_start);
 #endif /* CONFIG_TCG_IR_LOG */
             /* KLDBG: */
-            lj = kltrace(search_pc);
+          if (mod_addr <= tb->pc && tb->pc < mod_addr + mod_size)
+            lj = kltrace(&tcg_ctx, search_pc);
 #ifdef CONFIG_TCG_TAINT
             if (taint_tracking_enabled)
                 lj = optimize_taint(search_pc);
@@ -8301,7 +8307,8 @@ static inline void gen_intermediate_code_internal(CPUState *env,
             log_tcg_ir(tb, pc_ptr, pc_start);
 #endif /* CONFIG_TCG_IR_LOG */
             /* KLDBG: */
-            lj = kltrace(search_pc);
+            if (mod_addr <= tb->pc && tb->pc < mod_addr + mod_size)
+              lj = kltrace(&tcg_ctx, search_pc);
 #ifdef CONFIG_TCG_TAINT
             if (taint_tracking_enabled)
                 lj = optimize_taint(search_pc);
@@ -8322,7 +8329,8 @@ static inline void gen_intermediate_code_internal(CPUState *env,
             log_tcg_ir(tb, pc_ptr, pc_start);
 #endif /* CONFIG_TCG_IR_LOG */
             /* KLDBG: */
-            lj = kltrace(search_pc);
+          if (mod_addr <= tb->pc && tb->pc < mod_addr + mod_size)
+            lj = kltrace(&tcg_ctx, search_pc);
 #ifdef CONFIG_TCG_TAINT
             if (taint_tracking_enabled)
                 lj = optimize_taint(search_pc);
@@ -8379,20 +8387,20 @@ void gen_intermediate_code_pc(CPUState *env, TranslationBlock *tb)
 void restore_state_to_opc(CPUState *env, TranslationBlock *tb, int pc_pos)
 {
     int cc_op;
-#ifdef DEBUG_DISAS
-    if (qemu_loglevel_mask(CPU_LOG_TB_OP)) {
-        int i;
-        qemu_log("RESTORE:\n");
-        for(i = 0;i <= pc_pos; i++) {
-            if (gen_opc_instr_start[i]) {
-                qemu_log("0x%04x: " TARGET_FMT_lx "\n", i, gen_opc_pc[i]);
-            }
-        }
-        qemu_log("pc_pos=0x%x eip=" TARGET_FMT_lx " cs_base=%x\n",
-                pc_pos, gen_opc_pc[pc_pos] - tb->cs_base,
-                (uint32_t)tb->cs_base);
-    }
-#endif
+// #ifdef DEBUG_DISAS
+//     if (qemu_loglevel_mask(CPU_LOG_TB_OP)) {
+//         int i;
+//         qemu_log("RESTORE:\n");
+//         for(i = 0;i <= pc_pos; i++) {
+//             if (gen_opc_instr_start[i]) {
+//                 qemu_log("0x%04x: " TARGET_FMT_lx "\n", i, gen_opc_pc[i]);
+//             }
+//         }
+//         qemu_log("pc_pos=0x%x eip=" TARGET_FMT_lx " cs_base=%x\n",
+//                 pc_pos, gen_opc_pc[pc_pos] - tb->cs_base,
+//                 (uint32_t)tb->cs_base);
+//     }
+// #endif
     env->eip = gen_opc_pc[pc_pos] - tb->cs_base;
     cc_op = gen_opc_cc_op[pc_pos];
     if (cc_op != CC_OP_DYNAMIC)

@@ -136,6 +136,9 @@ static TranslationBlock *tb_find_slow(CPUState *env,
     return tb;
 }
 
+extern target_ulong mod_addr;
+extern target_ulong mod_size;
+
 static inline TranslationBlock *tb_find_fast(CPUState *env)
 {
     TranslationBlock *tb;
@@ -150,6 +153,12 @@ static inline TranslationBlock *tb_find_fast(CPUState *env)
     if (unlikely(!tb || tb->pc != pc || tb->cs_base != cs_base ||
                  tb->flags != flags)) {
         tb = tb_find_slow(env, pc, cs_base, flags);
+    }
+    else if (mod_addr <= tb->pc && tb->pc <mod_addr + mod_size)
+      printf("cached:%lx\n", tb->pc);
+      
+    if (mod_addr <= tb->pc && tb->pc <mod_addr + mod_size) {
+      printf("exec:%lx\n", tb->pc);
     }
     return tb;
 }
@@ -313,10 +322,10 @@ int cpu_exec(CPUState *env)
                             do_interrupt_x86_hardirq(env, EXCP12_MCHK, 0);
                             next_tb = 0;
                         } else if ((interrupt_request & CPU_INTERRUPT_HARD) &&
-                                   (((env->hflags2 & HF2_VINTR_MASK) && 
+                                   (((env->hflags2 & HF2_VINTR_MASK) &&
                                      (env->hflags2 & HF2_HIF_MASK)) ||
-                                    (!(env->hflags2 & HF2_VINTR_MASK) && 
-                                     (env->eflags & IF_MASK && 
+                                    (!(env->hflags2 & HF2_VINTR_MASK) &&
+                                     (env->eflags & IF_MASK &&
                                       !(env->hflags & HF_INHIBIT_IRQ_MASK))))) {
                             int intno;
                             svm_check_intercept(env, SVM_EXIT_INTR);
@@ -329,7 +338,7 @@ int cpu_exec(CPUState *env)
                             next_tb = 0;
 #if !defined(CONFIG_USER_ONLY)
                         } else if ((interrupt_request & CPU_INTERRUPT_VIRQ) &&
-                                   (env->eflags & IF_MASK) && 
+                                   (env->eflags & IF_MASK) &&
                                    !(env->hflags & HF_INHIBIT_IRQ_MASK)) {
                             int intno;
                             /* FIXME: this should respect TPR */
@@ -541,7 +550,7 @@ int cpu_exec(CPUState *env)
 				DECAF_perform_flush(env);
 
 
-				
+
                 tb = tb_find_fast(env);
                 /* Note: we do it here to avoid a gcc bug on Mac OS X when
                    doing it in tb_find_slow */
@@ -560,9 +569,9 @@ int cpu_exec(CPUState *env)
                 /* see if we can patch the calling TB. When the TB
                    spans two pages, we cannot safely do a direct
                    jump. */
-                if (next_tb != 0 && tb->page_addr[1] == -1) {
+                /* if (next_tb != 0 && tb->page_addr[1] == -1) {
                     tb_add_jump((TranslationBlock *)(next_tb & ~3), next_tb & 3, tb);
-                }
+                } */
                 spin_unlock(&tb_lock);
 
                 /* cpu_interrupt might be called while translating the

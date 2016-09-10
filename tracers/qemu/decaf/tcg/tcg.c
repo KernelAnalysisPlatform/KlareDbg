@@ -92,6 +92,8 @@ static int tcg_target_const_match(tcg_target_long val,
                                   const TCGArgConstraint *arg_ct);
 static int tcg_target_get_call_iarg_regs_count(int flags);
 static void tcg_out_calli(TCGContext *s, tcg_target_long dest);
+
+
 TCGOpDef tcg_op_defs[] = {
 #define DEF(s, oargs, iargs, cargs, flags) { #s, oargs, iargs, cargs, iargs + oargs + cargs, flags },
 #include "tcg-opc.h"
@@ -2075,6 +2077,8 @@ static void dump_op_count(void)
 }
 #endif
 
+extern target_ulong mod_addr;
+extern target_ulong mod_size;
 
 static inline int tcg_gen_code_common(TCGContext *s, uint8_t *gen_code_buf,
                                       long search_pc)
@@ -2087,9 +2091,11 @@ static inline int tcg_gen_code_common(TCGContext *s, uint8_t *gen_code_buf,
 
 #ifdef DEBUG_DISAS
     if (unlikely(qemu_loglevel_mask(CPU_LOG_TB_OP))) {
+      if(mod_addr <= cpu_single_env->eip && cpu_single_env->eip < mod_addr + mod_size) {
         qemu_log("OP:\n");
         tcg_dump_ops(s, logfile);
         qemu_log("\n");
+      }
     }
 #endif
 #ifndef CONFIG_TCG_TAINT
@@ -2135,7 +2141,7 @@ static inline int tcg_gen_code_common(TCGContext *s, uint8_t *gen_code_buf,
 #if 0
         printf("%s: %d %d %d\n", def->name,
                def->nb_oargs, def->nb_iargs, def->nb_cargs);
-        //        dump_regs(s);
+        dump_regs(s);
 #endif
         switch(opc) {
         case INDEX_op_mov_i32:
@@ -2144,14 +2150,12 @@ static inline int tcg_gen_code_common(TCGContext *s, uint8_t *gen_code_buf,
 #endif
             dead_args = s->op_dead_args[op_index];
             tcg_reg_alloc_mov(s, def, args, dead_args);
-	    //tcg_out_calli(s, (tcg_target_long)test);
             break;
         case INDEX_op_movi_i32:
 #if TCG_TARGET_REG_BITS == 64
         case INDEX_op_movi_i64:
 #endif
             tcg_reg_alloc_movi(s, args);
-		//tcg_out_calli(s, (tcg_target_long)test);
             break;
         case INDEX_op_debug_insn_start:
             /* debug instruction */

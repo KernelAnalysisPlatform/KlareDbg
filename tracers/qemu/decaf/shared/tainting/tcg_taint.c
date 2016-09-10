@@ -17,6 +17,7 @@
 #include "helper.h" // Taint helper functions, plus I386 IN/OUT helpers
 #include "DECAF_callback_common.h"
 #include "DECAF_callback_to_QEMU.h"
+#include "tcg-op.h"
 
 /* Target-specific metadata buffers are extern'd here so that the taint
    IR insertions can update them. */
@@ -28,6 +29,7 @@ extern uint32_t gen_opc_condexec_bits[OPC_BUF_SIZE];
 
 uint16_t *gen_old_opc_ptr;
 TCGArg *gen_old_opparam_ptr;
+extern TCGv_ptr cpu_env;
 
 uint32_t block_count = 0; // AWH - Debugging
 
@@ -58,23 +60,47 @@ static TCGArg helper_arg_array[MAX_TAINT_LOG_TEMPS];
 static TCGv taint_log_temps[MAX_TAINT_LOG_TEMPS];
 static inline void set_con_i32(int index, TCGv arg)
 {
-	  tcg_gen_mov_i32(taint_log_temps[index], arg);
-		helper_arg_array[index] = taint_log_temps[index];
+		TCGv tmp;
+#if TCG_TARGET_REG_BITS == 32
+    tmp = tcg_temp_new_i32();
+#else
+    tmp = tcg_temp_new_i64();
+#endif		
+	  tcg_gen_mov_i32(tmp, arg);
+		helper_arg_array[index] = tmp;
 }
 static inline void set_con_i64(int index, TCGv arg)
 {
-	  tcg_gen_mov_i64(taint_log_temps[index], arg);
-		helper_arg_array[index] = taint_log_temps[index];
+		TCGv tmp;
+#if TCG_TARGET_REG_BITS == 32
+    tmp = tcg_temp_new_i32();
+#else
+    tmp = tcg_temp_new_i64();
+#endif
+	  tcg_gen_mov_i64(tmp, arg);
+		helper_arg_array[index] = tmp;
 }
 static inline void set_coni_i32(int index, TCGArg arg)
 {
-	  tcg_gen_movi_i32(taint_log_temps[index], arg);
-		helper_arg_array[index] = taint_log_temps[index];
+		TCGv tmp;
+#if TCG_TARGET_REG_BITS == 32
+    tmp = tcg_temp_new_i32();
+#else
+    tmp = tcg_temp_new_i64();
+#endif
+	  tcg_gen_movi_i32(tmp, arg);
+		helper_arg_array[index] = tmp;
 }
 static inline void set_coni_i64(int index, TCGArg arg)
 {
-	  tcg_gen_movi_i64(taint_log_temps[index], arg);
-		helper_arg_array[index] = taint_log_temps[index];
+		TCGv tmp;
+#if TCG_TARGET_REG_BITS == 32
+    tmp = tcg_temp_new_i32();
+#else
+    tmp = tcg_temp_new_i64();
+#endif
+	  tcg_gen_movi_i64(tmp, arg);
+		helper_arg_array[index] = tmp;
 }
 
 //#endif
@@ -138,56 +164,97 @@ static void DUMMY_TAINT(int nb_oargs, int nb_args)
     }
   }
 }
-static inline access_register_common(size_t mode, uint8_t w) {
-	//if (DECAF_is_callback_needed(DECAF_READ_REG_CB)){
-			TCGv value;
-			TCGArg base, offset;
-			value = gen_opparam_ptr[-3]; // value
-			base = gen_opparam_ptr[-2];	// Address of CPUArch
-			offset = gen_opparam_ptr[-1];	// register offset
+static inline access_register_common_arg(size_t mode, uint8_t w, int size,
+																				TCGArg base, TCGArg offset, TCGv value)
+{
+			TCGArg size_a;
+			size_a = size;
 			if (mode == 32) {
 				set_con_i32(0, base);
 				set_coni_i32(1, offset);
 				set_con_i32(2, value);
+				set_coni_i32(3, size_a);
 			}
 			else if (mode == 64) {
 				set_con_i64(0, base);
 				set_coni_i64(1, offset);
 				set_con_i64(2, value);
+				set_coni_i64(3, size_a);
 			}
 			if (w == 1) {
 			tcg_gen_helperN(helper_DECAF_invoke_register_write_callback, 0, 0,
-											TCG_CALL_DUMMY_ARG, 3, helper_arg_array);
+											TCG_CALL_DUMMY_ARG, 4, helper_arg_array);
 			}
 			else {
 			tcg_gen_helperN(helper_DECAF_invoke_register_read_callback, 0, 0,
-											TCG_CALL_DUMMY_ARG, 3, helper_arg_array);
+											TCG_CALL_DUMMY_ARG, 4, helper_arg_array);
 			}
-		//}
-
+}
+static inline access_register_common(size_t mode, uint8_t w, int size) {
+	access_register_common_arg(mode, w, size, gen_opparam_ptr[-2], gen_opparam_ptr[-1],gen_opparam_ptr[-3]);
 }
 
-static inline read_register_32() {
-	access_register_common(32, 0);
+static inline read_register_32(int size) {
+	access_register_common(32, 0, size);
 }
-static inline write_register_32() {
-	access_register_common(32, 1);
+static inline write_register_32(int size) {
+	access_register_common(32, 1, size);
 }
-static inline read_register_64() {
-	access_register_common(64, 0);
+static inline read_register_64(int size) {
+	access_register_common(64, 0, size);
 }
-static inline write_register_64() {
-	access_register_common(64, 1);
+static inline write_register_64(int size) {
+	access_register_common(64, 1, size);
 }
 
-#if 0 //defined(USE_TCG_OPTIMIZATIONS)
-/* This holds our metadata for each of the original opcodes to
-  tell whether it will be elimintaed in liveness checks (0) or
-  will still remain alive (1) and must be instrumented. */
-static uint8_t gen_old_liveness_metadata[OPC_BUF_SIZE];
-static void build_liveness_metadata(TCGContext *s);
-#endif /* USE_TCG_OPTIMIZATIONS */
-static inline int gen_kltrace_insn(int search_pc)
+static void gen_kltrace_mov(TCGContext *ctx, TCGArg *args) {
+	TCGTemp *ts, *ots;
+	TCGv value;
+	ots = &ctx->temps[args[0]];
+	ts = &ctx->temps[args[1]];
+	if (ts->val_type == TEMP_VAL_MEM) {
+		#if TCG_TARGET_REG_BITS == 32
+		    value = tcg_temp_new_i32();
+		#else
+		    value = tcg_temp_new_i64();
+		#endif
+		tcg_gen_ld_tl(value, cpu_env, ts->mem_offset);
+		if (ts->type == TCG_TYPE_I32)
+			access_register_common_arg(32, 0, 32, ts->mem_reg, ts->mem_offset, value);
+		if (ts->type == TCG_TYPE_I64)
+			access_register_common_arg(64, 0, 64, ts->mem_reg, ts->mem_offset, value);
+	}
+}
+static void gen_kltrace_op(TCGContext *ctx, TCGArg *args, TCGOpDef *def) {
+	int i,k;
+	TCGArg arg;
+	TCGTemp *ts;
+	TCGv value;
+	int nb_oargs = def->nb_oargs;
+	int nb_iargs = def->nb_iargs;
+
+	for(k = 0; k < nb_iargs; k++) {
+		i = def->sorted_args[nb_oargs + k];
+	  arg = args[i];
+		ts = &ctx->temps[arg];
+		if (ts->val_type == TEMP_VAL_MEM) {
+			#if TCG_TARGET_REG_BITS == 32
+			    value = tcg_temp_new_i32();
+			#else
+			    value = tcg_temp_new_i64();
+			#endif
+			tcg_gen_ld_tl(value, cpu_env, ts->mem_offset);
+			if (ts->type == TCG_TYPE_I32) {
+				access_register_common_arg(32, 0, 32, ts->mem_reg, ts->mem_offset, value);
+			}
+			if (ts->type == TCG_TYPE_I64) {
+				access_register_common_arg(64, 0, 64, ts->mem_reg, ts->mem_offset, value);
+			}
+		}
+	}
+}
+
+static inline int gen_kltrace_insn(TCGContext *ctx, int search_pc)
 {
 	/* Opcode and parameter buffers */
   static uint16_t gen_old_opc_buf[OPC_BUF_SIZE];
@@ -217,6 +284,8 @@ static inline int gen_kltrace_insn(int search_pc)
   TCGv arg6, t5, t6;
 #endif /* TARGET check */
   TCGv orig0, orig1, orig2, orig3, orig4, orig5;
+	TCGArg *args;
+	TCGOpDef *def;
 
   /* Copy all of the existing ops/parms into a new buffer to back them up. */
   memcpy(gen_old_opc_buf, gen_old_opc_ptr, sizeof(uint16_t)*(nb_opc));
@@ -271,7 +340,8 @@ static inline int gen_kltrace_insn(int search_pc)
     }
 
     /* Copy the opcode to be instrumented */
-    opc = *(gen_opc_ptr++) = gen_old_opc_buf[opc_index++];
+		opc = gen_old_opc_buf[opc_index];
+		def = &tcg_op_defs[opc];
 
     /* Determine the number and type of arguments for the opcode */
     if (opc == INDEX_op_call) {
@@ -290,6 +360,43 @@ static inline int gen_kltrace_insn(int search_pc)
       nb_cargs = tcg_op_defs[opc].nb_cargs;
     }
 
+		args = (TCGArg*)malloc(sizeof(TCGArg) * nb_args);
+    for(i=0; i<nb_args; i++)
+      args[i] = gen_old_opparam_buf[opparam_index + i];
+
+		/* ### Instrument before operations ### */
+		switch (opc) {
+			/* QEMU-specific operations. */
+			case INDEX_op_mov_i32:
+			case INDEX_op_mov_i64:
+				gen_kltrace_mov(ctx,args);
+			  break;
+			case INDEX_op_ld8u_i32:
+      case INDEX_op_ld8s_i32:
+      case INDEX_op_ld16u_i32:
+      case INDEX_op_ld16s_i32:
+      case INDEX_op_ld_i32:
+      case INDEX_op_ld8u_i64:
+      case INDEX_op_ld8s_i64:
+      case INDEX_op_ld16u_i64:
+      case INDEX_op_ld16s_i64:
+      case INDEX_op_ld32u_i64:
+      case INDEX_op_ld32s_i64:
+      case INDEX_op_ld_i64:
+      case INDEX_op_st8_i32:
+      case INDEX_op_st16_i32:
+      case INDEX_op_st_i32:
+      case INDEX_op_st8_i64:
+      case INDEX_op_st16_i64:
+      case INDEX_op_st32_i64:
+      case INDEX_op_st_i64:
+				break;
+			default:
+				gen_kltrace_op(ctx, args, def);
+				break;
+		}
+
+    *(gen_opc_ptr++) = gen_old_opc_buf[opc_index++];
     /* Copy the appropriate number of arguments for the opcode */
     for(i=0; i<nb_args; i++)
       *(gen_opparam_ptr++) = gen_old_opparam_buf[opparam_index++];
@@ -300,45 +407,59 @@ static inline int gen_kltrace_insn(int search_pc)
        if this is a "search_pc" TB, that means we know how many extra
        entries we need to put in the metadata buffers to keep
        everything in sync. */
+
+		/* ### Instrument after operations ### */
     gen_old_opc_ptr = gen_opc_ptr;
 		switch (opc) {
 			/* QEMU-specific operations. */
 			case INDEX_op_ld8u_i32:
       case INDEX_op_ld8s_i32:
+				read_register_32(8);
       case INDEX_op_ld16u_i32:
       case INDEX_op_ld16s_i32:
+				read_register_32(16);
       case INDEX_op_ld_i32:
-				read_register_32();
+				read_register_32(32);
 				break;
       case INDEX_op_ld8u_i64:
       case INDEX_op_ld8s_i64:
+				read_register_64(8);
       case INDEX_op_ld16u_i64:
       case INDEX_op_ld16s_i64:
+				read_register_64(16);
       case INDEX_op_ld32u_i64:
       case INDEX_op_ld32s_i64:
+				read_register_64(32);
       case INDEX_op_ld_i64:
-				read_register_64();
+				read_register_64(64);
 				break;
       case INDEX_op_st8_i32:
+				write_register_32(8);
       case INDEX_op_st16_i32:
+				write_register_32(16);
       case INDEX_op_st_i32:
-				write_register_32();
+				write_register_32(32);
 				break;
       case INDEX_op_st8_i64:
+				write_register_64(8);
       case INDEX_op_st16_i64:
+				write_register_64(16);
       case INDEX_op_st32_i64:
+				write_register_64(32);
       case INDEX_op_st_i64:
-				write_register_64();
+				write_register_64(64);
 				break;
 		}
 	}
+	free(args);
 	return return_lj;
 }
 
-int kltrace(int search_pc) {
+int kltrace(TCGContext *ctx, int search_pc) {
+	printf("kltrace\n");
 	int retVal = 0;
 	block_count++;
-	retVal = gen_kltrace_insn(search_pc);
+	retVal = gen_kltrace_insn(ctx, search_pc);
 	return retVal;
 }
 
