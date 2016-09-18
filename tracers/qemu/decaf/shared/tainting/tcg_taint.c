@@ -17,7 +17,7 @@
 #include "helper.h" // Taint helper functions, plus I386 IN/OUT helpers
 #include "DECAF_callback_common.h"
 #include "DECAF_callback_to_QEMU.h"
-#include "tcg-op.h"
+#include "tcg_track.h"
 
 /* Target-specific metadata buffers are extern'd here so that the taint
    IR insertions can update them. */
@@ -65,7 +65,7 @@ static inline void set_con_i32(int index, TCGv arg)
     tmp = tcg_temp_new_i32();
 #else
     tmp = tcg_temp_new_i64();
-#endif		
+#endif
 	  tcg_gen_mov_i32(tmp, arg);
 		helper_arg_array[index] = tmp;
 }
@@ -164,30 +164,49 @@ static void DUMMY_TAINT(int nb_oargs, int nb_args)
     }
   }
 }
+static inline mark_tb_head(TCGArg addr, TCGArg size, int cnst)
+{
+	if (cnst)
+		set_coni_i64(0, addr);
+	else
+		set_con_i64(0, addr);
+
+	set_coni_i64(1, size);
+	set_coni_i64(2, IS_START);
+	tcg_gen_helperN(add_change, 0, 0,
+								TCG_CALL_DUMMY_ARG, 3, helper_arg_array);
+
+}
 static inline access_register_common_arg(size_t mode, uint8_t w, int size,
 																				TCGArg base, TCGArg offset, TCGv value)
 {
 			TCGArg size_a;
 			size_a = size;
-			if (mode == 32) {
-				set_con_i32(0, base);
-				set_coni_i32(1, offset);
-				set_con_i32(2, value);
-				set_coni_i32(3, size_a);
-			}
-			else if (mode == 64) {
-				set_con_i64(0, base);
-				set_coni_i64(1, offset);
-				set_con_i64(2, value);
-				set_coni_i64(3, size_a);
-			}
-			if (w == 1) {
-			tcg_gen_helperN(helper_DECAF_invoke_register_write_callback, 0, 0,
-											TCG_CALL_DUMMY_ARG, 4, helper_arg_array);
-			}
-			else {
-			tcg_gen_helperN(helper_DECAF_invoke_register_read_callback, 0, 0,
-											TCG_CALL_DUMMY_ARG, 4, helper_arg_array);
+			/* FIXME: */
+			if (offset == 0x80 && w == 1) {
+				/* Jump to next instruction */
+					mark_tb_head(value, size, 0);
+			} else {
+				if (mode == 32) {
+					set_con_i32(0, base);
+					set_coni_i32(1, offset);
+					set_con_i32(2, value);
+					set_coni_i32(3, size_a);
+				}
+				else if (mode == 64) {
+					set_con_i64(0, base);
+					set_coni_i64(1, offset);
+					set_con_i64(2, value);
+					set_coni_i64(3, size_a);
+				}
+				if (w == 1) {
+				tcg_gen_helperN(helper_DECAF_invoke_register_write_callback, 0, 0,
+												TCG_CALL_DUMMY_ARG, 4, helper_arg_array);
+				}
+				else {
+				tcg_gen_helperN(helper_DECAF_invoke_register_read_callback, 0, 0,
+												TCG_CALL_DUMMY_ARG, 4, helper_arg_array);
+				}
 			}
 }
 static inline access_register_common(size_t mode, uint8_t w, int size) {
@@ -254,7 +273,8 @@ static void gen_kltrace_op(TCGContext *ctx, TCGArg *args, TCGOpDef *def) {
 	}
 }
 
-static inline int gen_kltrace_insn(TCGContext *ctx, int search_pc)
+static short tb_head = 1;
+static inline int gen_kltrace_insn(TCGContext *ctx, TranslationBlock *tb, int search_pc)
 {
 	/* Opcode and parameter buffers */
   static uint16_t gen_old_opc_buf[OPC_BUF_SIZE];
@@ -364,6 +384,12 @@ static inline int gen_kltrace_insn(TCGContext *ctx, int search_pc)
     for(i=0; i<nb_args; i++)
       args[i] = gen_old_opparam_buf[opparam_index + i];
 
+		/* Instrument indicator of head address per TB.
+		 	 This operation let kldbg know current address. */
+		if (tb_head) {
+			mark_tb_head(tb->pc, tb->size, 1);
+			tb_head = 0;
+		}
 		/* ### Instrument before operations ### */
 		switch (opc) {
 			/* QEMU-specific operations. */
@@ -455,11 +481,11 @@ static inline int gen_kltrace_insn(TCGContext *ctx, int search_pc)
 	return return_lj;
 }
 
-int kltrace(TCGContext *ctx, int search_pc) {
+int kltrace(TCGContext *ctx, TranslationBlock *tb, int search_pc) {
 	printf("kltrace\n");
 	int retVal = 0;
 	block_count++;
-	retVal = gen_kltrace_insn(ctx, search_pc);
+	retVal = gen_kltrace_insn(ctx, tb, search_pc);
 	return retVal;
 }
 

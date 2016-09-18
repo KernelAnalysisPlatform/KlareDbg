@@ -254,17 +254,22 @@ def getinstructions(forknum, clnum, clstart, clend):
   trace = program.traces[forknum]
   slce = qira_analysis.slice(trace, clnum)
   ret = []
-
+  print "getinstructions(%d,%d,%d,%d)" % (forknum, clnum, clstart, clend)
   def get_instruction(i):
     rret = trace.db.fetch_changes_by_clnum(i, 1)
+    print 'get_instruction %d' % (i)
     if len(rret) == 0:
       return None
     else:
       rret = rret[0]
 
     instr = program.static[rret['address']]['instruction']
-    rret['instruction'] = instr.__str__(trace, i) #i == clnum
-
+    if instr == None:
+      rret['instruction'] = "lib_func"
+    else:
+      rret['instruction'] = instr.__str__() #i == clnum
+      
+    print '0x%lx %s\n' % (rret['address'], rret['instruction'])
     # check if static fails at this
     if rret['instruction'] == "":
       # TODO: wrong place to get the arch
@@ -435,4 +440,3 @@ def run_server(largs, lprogram):
   except KeyboardInterrupt:
     print "*** User raised KeyboardInterrupt"
     exit()
-

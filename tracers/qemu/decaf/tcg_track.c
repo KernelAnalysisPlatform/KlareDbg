@@ -89,8 +89,9 @@ void init_QIRA(int id) {
 }
 
 struct change *add_change(target_ulong addr, uint64_t data, uint32_t flags) {
+  if (flags == IS_START)
+  	GLOBAL_logstate->changelist_number++;
   size_t cc = __sync_fetch_and_add(&GLOBAL_logstate->change_count, 1);
-
   if (cc == GLOBAL_change_size) {
     // double the buffer size
     QIRA_DEBUG("doubling buffer with size %d\n", GLOBAL_change_size);
@@ -102,6 +103,7 @@ struct change *add_change(target_ulong addr, uint64_t data, uint32_t flags) {
   this_change->data = data;
   this_change->changelist_number = GLOBAL_logstate->changelist_number;
   this_change->flags = IS_VALID | flags;
+  QIRA_DEBUG("(%d) change: 0x%lx  0x%lx\n", GLOBAL_logstate->changelist_number, addr, data);
   return this_change;
 }
 
@@ -137,32 +139,34 @@ struct change *track_syscall_begin(void *env, target_ulong sysnr) {
 
 // all loads and store happen in libraries...
 void track_load(target_ulong addr, uint64_t data, int size) {
-  QIRA_DEBUG("load:  0x%lx:%d\n", addr, size);
+  QIRA_DEBUG("(%d) load:  0x%lx:%d\n", GLOBAL_logstate->changelist_number, addr, size);
   add_change(addr, data, IS_MEM | size);
 }
 
 void track_store(target_ulong addr, uint64_t data, int size) {
-  QIRA_DEBUG("store: 0x%lx:%d = 0x%lX\n", addr, size, data);
+  QIRA_DEBUG("(%d) store: 0x%lx:%d = 0x%lX\n", GLOBAL_logstate->changelist_number, addr, size, data);
   add_change(addr, data, IS_MEM | IS_WRITE | size);
 }
 
 void track_read(target_ulong base, target_ulong offset, target_ulong data, int size) {
-  QIRA_DEBUG("read:  %lx+l%x:%d = %x\n", base, offset, size, data);
+  QIRA_DEBUG("(%d) read:  %lx+l%x:%d = %x\n", GLOBAL_logstate->changelist_number, base, offset, size, data);
   if ((int)offset < 0) return;
-  if (GLOBAL_logstate->is_filtered == 0) add_change(offset, data, size);
+  add_change(offset, data, size);
 }
 
 void track_write(target_ulong base, target_ulong offset, target_ulong data, int size) {
-  QIRA_DEBUG("write: %lx+%lx:%d = %x\n", base, offset, size, data);
+  QIRA_DEBUG("(%d) write: %lx+%lx:%d = %x\n", GLOBAL_logstate->changelist_number, base, offset, size, data);
   if ((int)offset < 0) return;
-  if (GLOBAL_logstate->is_filtered == 0) add_change(offset, data, IS_WRITE | size);
-  else add_pending_change(offset, data, IS_WRITE | size);
-  //else add_change(offset, data, IS_WRITE | size);
+  add_change(offset, data, IS_WRITE | size);
 }
 void target_disas(FILE *out, target_ulong code, target_ulong size, int flags) {
-  if (IN_MOD(code)) {
-    real_target_disas(GLOBAL_asm_file, code, size, flags);
-  }
+  OPEN_GLOBAL_ASM_FILE
+
+  flock(fileno(GLOBAL_asm_file), LOCK_EX);
+  real_target_disas(GLOBAL_asm_file, code, size, flags);
+  flock(fileno(GLOBAL_asm_file), LOCK_UN);
+
+  fflush(GLOBAL_asm_file);
 }
 
 int get_next_id(void) {

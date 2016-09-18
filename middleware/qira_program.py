@@ -39,7 +39,7 @@ def which(prog):
 
 # things that don't cross the fork
 class Program:
-  def __init__(self, prog, args=[], qemu_args=[]):
+  def __init__(self, image, args=[], qemu_args=[]):
     # create the logs dir
     try:
       os.mkdir(qira_config.TRACE_FILE_BASE)
@@ -47,28 +47,37 @@ class Program:
       pass
 
     # call which to match the behavior of strace and gdb
-    self.program = which(prog)
-    self.args = args
-    #self.proghash = sha1(open(self.program, "rb").read()).hexdigest()
-    print "*** image file is",self.program
+    self.image = which(image)
+    #self.proghash = sha1(open(self.image, "rb").read()).hexdigest()
+    print "*** image file is",self.image
 
     # this is always initted, as it's the tag repo
-    #self.static = static2.Static(self.program)
+    self.static = static2.Static(self.image)
 
     # no traces yet
     self.traces = {}
     self.runnable = False
 
+    self.memory = 2048
     # bring this back
-    if self.program != "/tmp/qira_image":
+    if self.image != "/tmp/qira_image":
       try:
         os.unlink("/tmp/qira_image")
       except:
         pass
       try:
-        os.symlink(os.path.realpath(self.program), "/tmp/qira_image")
+        os.symlink(os.path.realpath(self.image), "/tmp/qira_image")
       except:
         pass
+
+    #XXX: Are these arguments necessary?
+    #self.defaultargs = ["-strace", "-D", "/dev/null", "-d", "in_asm", "-singlestep"]+qemu_args
+    self.defaultargs = ["-m", str(self.memory), "-drive", "file=%s" % self.image,
+                        "-chardev", "socket,path=/tmp/qga.sock,server,nowait,id=qga0",
+                        "-device", "virtio-serial",
+                        "-device", "virtserialport,chardev=qga0,name=org.qemu.guest_agent.0",
+                        "-monitor", "stdio",
+                        "-d", "in_asm"]
     self.identify_guest_image()
 
   def identify_guest_image(self):
@@ -77,11 +86,14 @@ class Program:
     self.qirabinary = qemu_dir + "qira-x86_64"
     self.qirabinary = os.path.realpath(self.qirabinary)
     print "**** using",self.qirabinary
+    self.runnable = True
+    # XXX: Set fb x86_64 temporary
+    self.fb = 0x3e
 
   def clear(self):
     # probably always good to do except in development of middleware
-    print "*** deleting old runs"
-    self.delete_old_runs()
+    #print "*** deleting old runs"
+    #self.delete_old_runs()
 
     # getting asm from qemu
     self.create_asm_file()
@@ -89,17 +101,19 @@ class Program:
   def create_asm_file(self):
     if os.name == "nt":
       return
-    try:
-      os.unlink("/tmp/qira_asm")
-    except:
-      pass
+    # try:
+    #   os.unlink("/tmp/qira_asm")
+    # except:
+    #   pass
     open("/tmp/qira_asm", "a").close()
     self.qira_asm_file = open("/tmp/qira_asm", "r")
 
   def read_asm_file(self):
     if os.name == "nt":
       return
+    print "read_asm_file\n"
     dat = self.qira_asm_file.read()
+    print dat
     if len(dat) == 0:
       return
     cnt = 0
@@ -132,13 +146,13 @@ class Program:
       elif self.fb == 0xb7:   # aarch64
         inst = d[d.rfind("     ")+5:]
       else:
-        inst = d[d.find(":")+3:]
+        inst = d[d.find(":")+2:]
       cnt += 1
 
       # trigger disasm
-      d = self.static[addr]['instruction']
-
-      #print addr, inst
+      #d = self.static[addr]['instruction']
+      self.static[addr]['instruction'] = inst
+      print addr, inst
     #sys.stdout.write("%d..." % cnt); sys.stdout.flush()
 
   def delete_old_runs(self):
@@ -178,17 +192,17 @@ class Program:
     if shouldfork:
       if os.fork() != 0:
         return
-    eargs = [self.qirabinary]+self.defaultargs+args+[self.program]+self.args
+    eargs = [self.qirabinary]+self.defaultargs
     print "***",' '.join(eargs)
-    os.execvp(eargs[0], eargs)
+    #os.execvp(eargs[0], eargs)
 
 
 class Trace:
   def __init__(self, fn, forknum, program, r1, r2, r3):
     self.forknum = forknum
-    self.program = program
+    self.image = program
     self.db = qiradb.Trace(fn, forknum, r1, r2, r3)
-    self.load_base_memory()
+    #self.load_base_memory()
 
     # analysis stuff
     self.maxclnum = None
@@ -201,7 +215,7 @@ class Trace:
     self.needs_update = False
     self.strace = []
     self.mapped = []
-
+    print "Init Trace"
     threading.Thread(target=self.analysis_thread).start()
 
   def fetch_raw_memory(self, clnum, address, ln):
@@ -218,7 +232,7 @@ class Trace:
         dat[i] = mem[i]&0xFF
       else:
         try:
-          dat[i] = ord(self.program.static.memory(ri, 1)[0])
+          dat[i] = ord(self.image.static.memory(ri, 1)[0])
         except:
           pass
           #dat[i] = 0 #XXX is this correct behavior?
@@ -274,7 +288,7 @@ class Trace:
               print st,
               dat = alldat[off:off+sz]
 
-              self.program.static.add_memory_chunk(return_code, dat)
+              self.image.static.add_memory_chunk(return_code, dat)
               print "done"
             except Exception, e:
               print e
@@ -286,7 +300,7 @@ class Trace:
     self.strace = ret
 
   def analysis_thread(self):
-    #print "*** started analysis_thread"
+    print "*** started analysis_thread"
     while 1:
       time.sleep(0.2)
       # so this is done poorly, analysis can be incremental
@@ -294,18 +308,18 @@ class Trace:
         self.analysisready = False
         minclnum = self.db.get_minclnum()
         maxclnum = self.db.get_maxclnum()
-        self.program.read_asm_file()
-        self.flow = qira_analysis.get_instruction_flow(self, self.program, minclnum, maxclnum)
-        self.dmap = qira_analysis.get_hacked_depth_map(self.flow, self.program)
-        qira_analysis.analyse_calls(self)
+        self.image.read_asm_file()
+        #self.flow = qira_analysis.get_instruction_flow(self, self.image, minclnum, maxclnum)
+        #self.dmap = qira_analysis.get_hacked_depth_map(self.flow, self.image)
+        #qira_analysis.analyse_calls(self)
 
         # hacky pin offset problem fix
-        hpo = len(self.dmap)-(maxclnum-minclnum)
-        if hpo == 2:
-          self.dmap = self.dmap[1:]
-
-        self.maxd = max(self.dmap)
-        self.picture = qira_analysis.get_vtimeline_picture(self, minclnum, maxclnum)
+        # hpo = len(self.dmap)-(maxclnum-minclnum)
+        # if hpo == 2:
+        #   self.dmap = self.dmap[1:]
+        #
+        # self.maxd = max(self.dmap)
+        # self.picture = qira_analysis.get_vtimeline_picture(self, minclnum, maxclnum)
         self.minclnum = minclnum
         self.maxclnum = maxclnum
         self.needs_update = True
@@ -380,4 +394,4 @@ class Trace:
       except Exception, e:
         print "Failed to get", fn, "offset", offset, ":", e
         continue
-      self.program.static.add_memory_chunk(ss, dat)
+      self.image.static.add_memory_chunk(ss, dat)

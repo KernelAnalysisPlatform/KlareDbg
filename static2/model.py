@@ -240,10 +240,11 @@ class IgnoredRegister(Exception):
 # Instruction class
 class CsInsn(object):
   """one disassembled instruction"""
-  def __init__(self, raw, address, arch):
+  def __init__(self, raw, address, arch, stri = None):
     self.raw = raw
     self.address = address
     self.arch = arch
+    self.stri = stri
     if arch == "i386":
       self.md = Cs(CS_ARCH_X86, CS_MODE_32)
     elif arch == "x86-64":
@@ -312,9 +313,9 @@ class CsInsn(object):
   #we don't want to break str(x), but sometimes we want to augment the
   #diassembly with dynamic info. so we include optional arguments here
   def __str__(self, trace=None, clnum=None):
-    if self.decoded:
-      return "{}\t{}".format(self.i.mnemonic, self._get_operand_s(trace, clnum))
-    return ""
+    # if self.decoded:
+    #   return "{}\t{}".format(self.i.mnemonic, self._get_operand_s(trace, clnum))
+    return stri
 
   def is_jump(self):
     if not self.decoded:
@@ -398,7 +399,7 @@ class CsInsn(object):
     # QIRAdb gives us the registers after the instruction has been executed,
     # so we need to decrement this for instructions like "ldr r3, [r3]". (see regmem.js)
     register_values = trace.db.fetch_registers(clnum-1)
-    
+
     return dict(zip(registers, register_values))
 
   def _get_operand_s(self, trace, clnum):
@@ -411,18 +412,18 @@ class CsInsn(object):
     Implemented and tested on {x86, x86-64, arm, thumb, aarch64}
 
     Design choices / limitations:
-    
+
     1) This is a glorified string parsing hack that assumes Intel syntax.
        This is quite ugly IMO, but the alternative is to write our own
        dissassembler/printer which is unnecessary work. Fortunately,
        this is localized to the CsInsn class so we assume that Capstone
        syntax will not change. Otherwise, ping me if this breaks (@nedwill).
-    
+
     2) We don't resolve stack/base pointers. I think the better way to
        handle these are via stack/struct support, with labelled stack elements.
-    
+
     3) On ARM, "fp" isn't in the qiradb so we drop them.
-    
+
     4) This function must not raise any exceptions, returning self.i.op_str
        if necessary.
     """
@@ -450,7 +451,7 @@ class CsInsn(object):
             addr += _eval_op_x86(spl[i+1])
           else:
             assert spl[i] == "-"
-            addr -= _eval_op_x86(spl[i+1])          
+            addr -= _eval_op_x86(spl[i+1])
         return addr
 
       if "*" in exp:
@@ -596,25 +597,28 @@ class Tags:
     return tag in self.backing
 
   def __getitem__(self, tag):
-    if tag in self.backing:
-      return self.backing[tag]
-    else:
-      # should reading the instruction tag trigger disasm?
-      # and should dests be a seperate tag?
-      if tag == "instruction":
-        dat = self.static.memory(self.address, 0x10)
-        # arch should probably come from the address with fallthrough
-        self.backing['instruction'] = Instruction(dat, self.address, self.static[self.address]['arch'])
-        self.backing['len'] = self.backing['instruction'].size()
-        self.backing['type'] = 'instruction'
-        return self.backing[tag]
-      if tag == "crefs" or tag == "xrefs":
-        # crefs has a default value of a new array
-        self.backing[tag] = set()
-        return self.backing[tag]
-      if tag in self.static.global_tags:
-        return self.static.global_tags[tag]
-      return None
+    # if tag in self.backing:
+    #   return self.backing[tag]
+    # else:
+    #   # should reading the instruction tag trigger disasm?
+    #   # and should dests be a seperate tag?
+    #   if tag == "instruction":
+    #     dat = self.static.memory(self.address, 0x10)
+    #     # arch should probably come from the address with fallthrough
+    #     self.backing['instruction'] = Instruction(dat, self.address, self.static[self.address]['arch'])
+    #     self.backing['len'] = self.backing['instruction'].size()
+    #     self.backing['type'] = 'instruction'
+    #     return self.backing[tag]
+    #   if tag == "crefs" or tag == "xrefs":
+    #     # crefs has a default value of a new array
+    #     self.backing[tag] = set()
+    #     return self.backing[tag]
+    #   if tag in self.static.global_tags:
+    #     return self.static.global_tags[tag]
+    #   return None
+    if tag == "instruction" and tag in self.backing:
+        return self.backing['instruction']
+    return None
 
   def __delitem__(self, tag):
     try:
@@ -623,8 +627,14 @@ class Tags:
       pass
 
   def __setitem__(self, tag, val):
-    if tag == "instruction" and type(val) == str:
-      raise Exception("instructions shouldn't be strings")
+    # if tag == "instruction" and type(val) == str:
+    #   raise Exception("instructions shouldn't be strings")
+    if tag == "instruction":
+        # XXX: Arch is set to x86-64 temporary.
+       dat = b"\xde\xad\xbe\xef"
+       self.backing['instruction'] = Instruction(dat, self.address, "x86-64", val)
+       self.backing['len'] = self.backing['instruction'].size()
+       self.backing['type'] = 'instruction'
     if tag == "name":
       # name can change by adding underscores
       val = self.static.set_name(self.address, val)

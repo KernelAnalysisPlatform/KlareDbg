@@ -1,6 +1,7 @@
 #include <Python.h>
 #include <structmember.h>
 #include "Trace.h"
+#include <stdio.h>
 
 #define FE(z,x,y) for (z y = x.begin(); y != x.end(); ++y)
 
@@ -49,16 +50,16 @@ static PyObject *did_update(PyTrace *self) {
   }
 }
 
-static PyObject *fetch_clnums_by_address_and_type(PyTrace *self, PyObject *args) { 
+static PyObject *fetch_clnums_by_address_and_type(PyTrace *self, PyObject *args) {
   Address address;
   char type;
   Clnum start_clnum, end_clnum;
   unsigned int limit;
   if (!PyArg_ParseTuple(args, "KcIII", &address, &type, &start_clnum, &end_clnum, &limit)) { return NULL; }
   if (self->t == NULL) { return NULL; }
-  
+
   vector<Clnum> ret = self->t->FetchClnumsByAddressAndType(address, type, start_clnum, end_clnum, limit);
- 
+
   PyObject *pyret = PyList_New(ret.size());
   int i = 0;
   FE(vector<Clnum>::iterator, ret, it) {
@@ -85,6 +86,7 @@ static PyObject *fetch_changes_by_clnum(PyTrace *self, PyObject *args) {
   int i = 0;
   FE(vector<struct change>::iterator, ret, it) {
     // copied (address, data, clnum, flags) from qira_log.py, but type instead of flags
+    //printf("(%d) 0x%lx, 0x%lx\n", it->clnum, it->address, it->data);
     PyObject *iit = PyDict_New();
     PyObject *py_address = Py_BuildValue("K", it->address);
     PyObject *py_data = Py_BuildValue("K", it->data);
@@ -232,4 +234,3 @@ void init_qiradb(void) {
 }
 
 }
-

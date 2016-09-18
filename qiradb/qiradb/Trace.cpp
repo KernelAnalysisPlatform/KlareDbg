@@ -13,7 +13,7 @@
 #endif
 
 #include "Trace.h"
-
+#include <stdio.h>
 #define MP make_pair
 #define PAGE_MASK 0xFFFFFFFFFFFFF000LL
 #define INVALID_CLNUM 0xFFFFFFFF
@@ -144,7 +144,6 @@ bool Trace::ConnectToFileAndStart(char *filename, int register_size, int registe
   fd_ = open(filename, O_RDONLY);
   if (fd_ <= 0) return false;
 #endif
-
   if (!remap_backing(sizeof(struct change))) return false;
 
   THREAD_CREATE(thread, thread_entry, this);
@@ -155,7 +154,6 @@ void Trace::process() {
   MUTEX_LOCK(backing_mutex_);
   EntryNumber entry_count = *((EntryNumber*)backing_);  // don't let this change under me
   MUTEX_UNLOCK(backing_mutex_);
-
   if (entries_done_ >= entry_count) return;       // handle the > case better
 
   remap_backing(sizeof(struct change)*entry_count); // what if this fails?
@@ -174,10 +172,11 @@ void Trace::process() {
   }
 
   while (entries_done_ != entry_count) {
+
     // no need to lock this here, because this is the only thread that changes it
     const struct change *c = &backing_[entries_done_];
     char type = get_type_from_flags(c->flags);
-
+    printf("clnum:%d, 0x%lx 0x%lx\n",c->clnum, c->address, c->data);
     RWLOCK_WRLOCK(db_lock_);
     // clnum_to_entry_number_, instruction_pages_
     if (type == 'I') {
@@ -235,7 +234,7 @@ void Trace::process() {
     if (min_clnum_ == INVALID_CLNUM || c->clnum < min_clnum_) {
       min_clnum_ = c->clnum;
     }
-    
+
     entries_done_++;
   }
 
@@ -294,7 +293,7 @@ vector<struct change> Trace::FetchChangesByClnum(Clnum clnum, unsigned int limit
 
 vector<MemoryWithValid> Trace::FetchMemory(Clnum clnum, Address address, int len) {
   RWLOCK_RDLOCK(db_lock_);
-  vector<MemoryWithValid> ret; 
+  vector<MemoryWithValid> ret;
   for (Address i = address; i < address+len; i++) {
     ret.push_back(get_byte(clnum, i));
   }
@@ -320,4 +319,3 @@ map<Address, char> Trace::GetPages() {
   RWLOCK_UNLOCK(db_lock_);
   return ret;
 }
-

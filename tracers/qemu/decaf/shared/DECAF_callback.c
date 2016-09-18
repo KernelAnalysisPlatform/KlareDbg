@@ -739,6 +739,7 @@ void DECAF_invoke_tlb_exec_callback(CPUState *env, gva_t vaddr)
 }
 extern int dtainted;
 /* KLDBG: */
+
 void helper_DECAF_invoke_register_read_callback(CPUState *env, long offset, target_ulong value, int size)
 {
 // 	static callback_struct_t *cb_struct, *cb_temp;
@@ -762,7 +763,8 @@ void helper_DECAF_invoke_register_read_callback(CPUState *env, long offset, targ
 	// 	printf("[read] eip:%lx, env:%lx, offset:%ld, value: %d\n", env->eip, env, offset, value);
 	// }
 	//if (IN_MOD(env->eip)) {
-		printf("[read] env:%lx, offset:%lx, value: %lx\n", env, offset, value);
+		//printf("[read] env:%lx, offset:%lx, value: %lx\n", env, offset, value);
+		track_read((target_ulong)env, offset, value, size);
 	//}
 	return;
 }
@@ -788,7 +790,8 @@ void helper_DECAF_invoke_register_write_callback(CPUState *env, long offset, tar
 	// 	printf("[read] eip:%lx, env:%lx, offset:%ld, value: %d\n", env->eip, env, offset, value);
 	// }
 	//if (IN_MOD(env->eip)) {
-		printf("[write] env:%lx, offset:%lx, value: %lx\n", env, offset, value);
+		//printf("[write] env:%lx, offset:%lx, value: %lx\n", env, offset, value);
+		track_write((target_ulong)env, offset, value, size);
 	//}
 	return;
 }
@@ -1067,7 +1070,8 @@ void helper_DECAF_invoke_mem_read_callback(gva_t virt_addr,gpa_t phy_addr, unsig
 //   }
 // POP_ALL()
 	if (IN_MOD(cpu_single_env->eip)) {
-		printf("[read] virt_addr:%lx, value:%lu\n", virt_addr, value);
+		printf("[load] virt_addr:%lx, value:%lu\n", virt_addr, value);
+		track_load(virt_addr, value, data_type);
 	}
 }
 
@@ -1094,7 +1098,8 @@ void helper_DECAF_invoke_mem_write_callback(gva_t virt_addr,gpa_t phy_addr,unsig
 // 	}
 //   POP_ALL()
 	if (IN_MOD(cpu_single_env->eip)) {
-		printf("[write] virt_addr:%lx, value:%lu\n", virt_addr, value);
+		printf("[store] virt_addr:%lx, value:%lu\n", virt_addr, value);
+		track_store(virt_addr, value, data_type);
 	}
 }
 

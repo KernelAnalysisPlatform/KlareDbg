@@ -54,7 +54,7 @@ class Static:
 
     self.tags = {}
     self.path = path
-    self.scf = qira_config.STATIC_CACHE_BASE + sha1(open(self.path, "rb").read()).hexdigest()
+    #self.scf = qira_config.STATIC_CACHE_BASE + sha1(open(self.path, "rb").read()).hexdigest()
     self.r2core = None
     self.debug = debug
 
@@ -79,8 +79,8 @@ class Static:
     # TODO: clean this up
     if static_engine == "r2":
       sys.path.append(os.path.join(qira_config.BASEDIR, "static2", "r2"))
-      import r2pipe 
-      import loader 
+      import r2pipe
+      import loader
       import analyzer
       self.r2core = r2pipe.r2pipe(path)
       # capstone is not working ok yet, so using udis for now
@@ -105,7 +105,7 @@ class Static:
       import loader
       import analyzer
     self.analyzer = analyzer
-    loader.load_binary(self)
+    #loader.load_binary(self)
 
     if self.debug >= 1:
       print "*** elf loaded"
@@ -157,7 +157,7 @@ class Static:
       for k in dd:
         self[address][k] = dd[k]
 
-  # this should be replaced with a 
+  # this should be replaced with a
   def set_name(self, address, name):
     if name not in self.rnames:
       self.rnames[name] = address
@@ -212,7 +212,7 @@ class Static:
       if rret != {}:
         ret[a] = rret
     return ret
-  
+
   def __setitem__(self, address, dat):
     if type(address) is str:
       self.global_tags[address] = dat
@@ -230,7 +230,7 @@ class Static:
 
   # return the memory at address:ln
   # replaces get_static_bytes
-  # TODO: refactor this! 
+  # TODO: refactor this!
   def memory(self, address, ln):
     dat = []
     for i in range(ln):
@@ -306,5 +306,3 @@ if __name__ == "__main__":
   #for f in bw_functions:
     #print hex(f)
     #hexdump(static.memory(f, 0x20))
-
-

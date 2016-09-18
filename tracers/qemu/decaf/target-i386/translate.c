@@ -2799,53 +2799,11 @@ static void gen_eob(DisasContext *s)
     if (s->tb->flags & HF_RF_MASK) {
         gen_helper_reset_rf();
     }
-    if (s->singlestep_enabled) {
-        gen_helper_debug();
-    } else if (s->tf) {
+    // if (s->singlestep_enabled) {
+    //     gen_helper_debug();
+    if (s->tf) {
     	gen_helper_single_step();
     } else {
-    	if(DECAF_is_callback_needed(DECAF_INSN_END_CB))
-    		gen_helper_DECAF_invoke_insn_end_callback(cpu_env);
-
-		//Heng: now we change the opcode-specific callback to instruction end.
-		if(DECAF_is_callback_needed(DECAF_OPCODE_RANGE_CB) &&
-				DECAF_is_callback_needed_for_opcode(cur_opcode)) {
-			TCGv t_cur_pc, t_next_pc, t_opcode;
-
-			t_cur_pc = tcg_const_ptr(cur_pc);
-			t_next_pc = tcg_temp_new_ptr();
-			tcg_gen_ld_tl(t_next_pc, cpu_env, offsetof(CPUState, eip));
-			t_opcode = tcg_const_i32(cur_opcode);
-			gen_helper_DECAF_invoke_opcode_range_callback(cpu_env, t_cur_pc, t_next_pc, t_opcode);
-
-			tcg_temp_free(t_cur_pc);
-			tcg_temp_free(t_next_pc);
-			tcg_temp_free_i32(t_opcode);
-		}
-
-
-    	//LOK: Changed over to the new block end interface
-    	//    	if(DECAF_is_callback_needed(DECAF_BLOCK_END_CB))
-    	//    		gen_helper_DECAF_invoke_callback(tcg_const_i32(DECAF_BLOCK_END_CB));
-    	//By the time this function is called, the env->eip has already been updated to the
-    	//  new target. Keep this in mind. Take a look at the gen_jmp_tb code below
-
-    	if(DECAF_is_BlockEndCallback_needed(s->tb->pc, next_pc))
-    	{
-          //create temporary variables for tb and from
-          //LOK: Updated to use ptr and plain TCGv (target_long) types instead of i32
-          TCGv_ptr tmpTb = tcg_const_ptr((tcg_target_ulong)s->tb);
-          //LOK: We use tcg_temp_new since that defines a new target_ulong
-          // which can be confirmed inside tcg-op.h:2141
-    	  TCGv tmpFrom = tcg_temp_new();
-
-    	  tcg_gen_movi_tl(tmpFrom, cur_pc);
-          gen_helper_DECAF_invoke_block_end_callback(cpu_env, tmpTb, tmpFrom);
-
-          tcg_temp_free(tmpFrom);
-          tcg_temp_free_ptr(tmpTb);
-    	}
-
     	tcg_gen_exit_tb(0);
     }
     s->is_jmp = DISAS_TB_JUMP;
@@ -8109,6 +8067,12 @@ static inline void gen_intermediate_code_internal(CPUState *env,
     cs_base = tb->cs_base;
     flags = tb->flags;
 
+    /* KLDBG: In target address, singlestep mode should be enabled */
+    // if (mod_addr <= tb->pc && tb->pc < mod_addr + mod_size)
+    //   env->singlestep_enabled = 1;
+    // else
+    //   env->singlestep_enabled = 0;
+
     dc->pe = (flags >> HF_PE_SHIFT) & 1;
     dc->code32 = (flags >> HF_CS32_SHIFT) & 1;
     dc->ss32 = (flags >> HF_SS32_SHIFT) & 1;
@@ -8213,7 +8177,7 @@ static inline void gen_intermediate_code_internal(CPUState *env,
 #endif /* CONFIG_TCG_IR_LOG */
                     /* KLDBG: */
                     if (mod_addr <= tb->pc && tb->pc < mod_addr + mod_size)
-                      lj = kltrace(&tcg_ctx, search_pc);
+                      lj = kltrace(&tcg_ctx, tb, search_pc);
 #ifdef CONFIG_TCG_TAINT
                     if (taint_tracking_enabled)
                         lj = optimize_taint(search_pc);
@@ -8257,7 +8221,7 @@ static inline void gen_intermediate_code_internal(CPUState *env,
 #endif /* CONFIG_TCG_IR_LOG */
             /* KLDBG: */
           if (mod_addr <= tb->pc && tb->pc < mod_addr + mod_size)
-            lj = kltrace(&tcg_ctx, search_pc);
+            lj = kltrace(&tcg_ctx, tb, search_pc);
 #ifdef CONFIG_TCG_TAINT
             if (taint_tracking_enabled)
                 lj = optimize_taint(search_pc);
@@ -8271,26 +8235,12 @@ static inline void gen_intermediate_code_internal(CPUState *env,
            change to be happen */
         if (dc->tf || dc->singlestep_enabled ||
             (flags & HF_INHIBIT_IRQ_MASK)) {
-#ifdef CONFIG_TCG_LLVM
-            if(DECAF_is_callback_needed(DECAF_BLOCK_TRANS_CB))
-            {
-              tb->icount = num_insns;
-              helper_DECAF_invoke_block_trans_callback(tb, &tcg_ctx);
-            }
-#endif /* CONFIG_TCG_LLVM */
-#ifdef CONFIG_TCG_IR_LOG
-            log_tcg_ir(tb, pc_ptr, pc_start);
-#endif /* CONFIG_TCG_IR_LOG */
             /* KLDBG: */
           if (mod_addr <= tb->pc && tb->pc < mod_addr + mod_size)
-            lj = kltrace(&tcg_ctx, search_pc);
-#ifdef CONFIG_TCG_TAINT
-            if (taint_tracking_enabled)
-                lj = optimize_taint(search_pc);
-#endif /* CONFIG_TCG_TAINT */
-            gen_jmp_im(pc_ptr - dc->cs_base);
-            gen_eob(dc);
-            break;
+            lj = kltrace(&tcg_ctx, tb, search_pc);
+          gen_jmp_im(pc_ptr - dc->cs_base);
+          gen_eob(dc);
+          break;
         }
         /* if too long translation, stop generation too */
         if (gen_opc_ptr >= gen_opc_end ||
@@ -8308,7 +8258,7 @@ static inline void gen_intermediate_code_internal(CPUState *env,
 #endif /* CONFIG_TCG_IR_LOG */
             /* KLDBG: */
             if (mod_addr <= tb->pc && tb->pc < mod_addr + mod_size)
-              lj = kltrace(&tcg_ctx, search_pc);
+              lj = kltrace(&tcg_ctx, tb, search_pc);
 #ifdef CONFIG_TCG_TAINT
             if (taint_tracking_enabled)
                 lj = optimize_taint(search_pc);
@@ -8318,26 +8268,12 @@ static inline void gen_intermediate_code_internal(CPUState *env,
             break;
         }
         if (singlestep) {
-#ifdef CONFIG_TCG_LLVM
-          if(DECAF_is_callback_needed(DECAF_BLOCK_TRANS_CB))
-          {
-            tb->icount = num_insns;
-            helper_DECAF_invoke_block_trans_callback(tb, &tcg_ctx);
-          }
-#endif /* CONFIG_TCG_LLVM */
-#ifdef CONFIG_TCG_IR_LOG
-            log_tcg_ir(tb, pc_ptr, pc_start);
-#endif /* CONFIG_TCG_IR_LOG */
             /* KLDBG: */
           if (mod_addr <= tb->pc && tb->pc < mod_addr + mod_size)
-            lj = kltrace(&tcg_ctx, search_pc);
-#ifdef CONFIG_TCG_TAINT
-            if (taint_tracking_enabled)
-                lj = optimize_taint(search_pc);
-#endif /* CONFIG_TCG_TAINT */
-            gen_jmp_im(pc_ptr - dc->cs_base);
-            gen_eob(dc);
-            break;
+            lj = kltrace(&tcg_ctx, tb, search_pc);
+          gen_jmp_im(pc_ptr - dc->cs_base);
+          gen_eob(dc);
+          break;
         }
     }
     if (tb->cflags & CF_LAST_IO)
@@ -8355,16 +8291,18 @@ static inline void gen_intermediate_code_internal(CPUState *env,
 #ifdef DEBUG_DISAS
     if (qemu_loglevel_mask(CPU_LOG_TB_IN_ASM)) {
         int disas_flags;
-        qemu_log("----------------\n");
-        qemu_log("IN: %s\n", lookup_symbol(pc_start));
+        // qemu_log("----------------\n");
+        // qemu_log("IN: %s\n", lookup_symbol(pc_start));
 #ifdef TARGET_X86_64
         if (dc->code64)
             disas_flags = 2;
         else
 #endif
             disas_flags = !dc->code32;
-        log_target_disas(pc_start, pc_ptr - pc_start, disas_flags);
-        qemu_log("\n");
+        if (mod_addr <= pc_start && pc_start < mod_addr + mod_size) {
+          log_target_disas(pc_start, pc_ptr - pc_start, disas_flags);
+        }
+        //qemu_log("\n");
     }
 #endif
 

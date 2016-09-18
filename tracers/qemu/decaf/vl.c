@@ -3523,7 +3523,7 @@ int main(int argc, char **argv, char **envp)
 
     // KLDBG:
     if (GLOBAL_id == -1) { GLOBAL_id = get_next_id(); }
-    init_QIRA();
+    init_QIRA(GLOBAL_id);
 
     if (loadvm) {
 	// AWH - TODO: Handle all of the command line options here
