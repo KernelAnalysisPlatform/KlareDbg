@@ -133,6 +133,7 @@ bool Trace::ConnectToFileAndStart(char *filename, int register_size, int registe
   is_big_endian_ = is_big_endian;
   register_size_ = register_size;
   register_count_ = register_count;
+
   RWLOCK_INIT(db_lock_);
   MUTEX_INIT(backing_mutex_);
 
@@ -196,6 +197,7 @@ void Trace::process() {
 
     // registers_
     if (type == 'W' && (c->address < (unsigned int)(register_size_ * register_count_))) {
+      printf("(%d)reg_write: reg[%d] = %d\n", c->clnum, c->address / register_size_, c->data);
       registers_[c->address / register_size_][c->clnum] = c->data;
     }
 

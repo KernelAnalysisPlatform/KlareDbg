@@ -186,28 +186,29 @@ static inline access_register_common_arg(size_t mode, uint8_t w, int size,
 			if (offset == 0x80 && w == 1) {
 				/* Jump to next instruction */
 					mark_tb_head(value, size, 0);
-			} else {
-				if (mode == 32) {
-					set_con_i32(0, base);
-					set_coni_i32(1, offset);
-					set_con_i32(2, value);
-					set_coni_i32(3, size_a);
-				}
-				else if (mode == 64) {
-					set_con_i64(0, base);
-					set_coni_i64(1, offset);
-					set_con_i64(2, value);
-					set_coni_i64(3, size_a);
-				}
-				if (w == 1) {
-				tcg_gen_helperN(helper_DECAF_invoke_register_write_callback, 0, 0,
-												TCG_CALL_DUMMY_ARG, 4, helper_arg_array);
-				}
-				else {
-				tcg_gen_helperN(helper_DECAF_invoke_register_read_callback, 0, 0,
-												TCG_CALL_DUMMY_ARG, 4, helper_arg_array);
-				}
 			}
+			// else {
+			// 	if (mode == 32) {
+			// 		set_con_i32(0, base);
+			// 		set_coni_i32(1, offset);
+			// 		set_con_i32(2, value);
+			// 		set_coni_i32(3, size_a);
+			// 	}
+			// 	else if (mode == 64) {
+			// 		set_con_i64(0, base);
+			// 		set_coni_i64(1, offset);
+			// 		set_con_i64(2, value);
+			// 		set_coni_i64(3, size_a);
+			// 	}
+			// 	if (w == 1) {
+			// 	tcg_gen_helperN(helper_DECAF_invoke_register_write_callback, 0, 0,
+			// 									TCG_CALL_DUMMY_ARG, 4, helper_arg_array);
+			// 	}
+			// 	else {
+			// 	tcg_gen_helperN(helper_DECAF_invoke_register_read_callback, 0, 0,
+			// 									TCG_CALL_DUMMY_ARG, 4, helper_arg_array);
+			// 	}
+			// }
 }
 static inline access_register_common(size_t mode, uint8_t w, int size) {
 	access_register_common_arg(mode, w, size, gen_opparam_ptr[-2], gen_opparam_ptr[-1],gen_opparam_ptr[-3]);
@@ -390,37 +391,37 @@ static inline int gen_kltrace_insn(TCGContext *ctx, TranslationBlock *tb, int se
 			mark_tb_head(tb->pc, tb->size, 1);
 			tb_head = 0;
 		}
-		/* ### Instrument before operations ### */
-		switch (opc) {
-			/* QEMU-specific operations. */
-			case INDEX_op_mov_i32:
-			case INDEX_op_mov_i64:
-				gen_kltrace_mov(ctx,args);
-			  break;
-			case INDEX_op_ld8u_i32:
-      case INDEX_op_ld8s_i32:
-      case INDEX_op_ld16u_i32:
-      case INDEX_op_ld16s_i32:
-      case INDEX_op_ld_i32:
-      case INDEX_op_ld8u_i64:
-      case INDEX_op_ld8s_i64:
-      case INDEX_op_ld16u_i64:
-      case INDEX_op_ld16s_i64:
-      case INDEX_op_ld32u_i64:
-      case INDEX_op_ld32s_i64:
-      case INDEX_op_ld_i64:
-      case INDEX_op_st8_i32:
-      case INDEX_op_st16_i32:
-      case INDEX_op_st_i32:
-      case INDEX_op_st8_i64:
-      case INDEX_op_st16_i64:
-      case INDEX_op_st32_i64:
-      case INDEX_op_st_i64:
-				break;
-			default:
-				gen_kltrace_op(ctx, args, def);
-				break;
-		}
+		// /* ### Instrument before operations ### */
+		// switch (opc) {
+		// 	/* QEMU-specific operations. */
+		// 	case INDEX_op_mov_i32:
+		// 	case INDEX_op_mov_i64:
+		// 		gen_kltrace_mov(ctx,args);
+		// 	  break;
+		// 	case INDEX_op_ld8u_i32:
+    //   case INDEX_op_ld8s_i32:
+    //   case INDEX_op_ld16u_i32:
+    //   case INDEX_op_ld16s_i32:
+    //   case INDEX_op_ld_i32:
+    //   case INDEX_op_ld8u_i64:
+    //   case INDEX_op_ld8s_i64:
+    //   case INDEX_op_ld16u_i64:
+    //   case INDEX_op_ld16s_i64:
+    //   case INDEX_op_ld32u_i64:
+    //   case INDEX_op_ld32s_i64:
+    //   case INDEX_op_ld_i64:
+    //   case INDEX_op_st8_i32:
+    //   case INDEX_op_st16_i32:
+    //   case INDEX_op_st_i32:
+    //   case INDEX_op_st8_i64:
+    //   case INDEX_op_st16_i64:
+    //   case INDEX_op_st32_i64:
+    //   case INDEX_op_st_i64:
+		// 		break;
+		// 	default:
+		// 		gen_kltrace_op(ctx, args, def);
+		// 		break;
+		// }
 
     *(gen_opc_ptr++) = gen_old_opc_buf[opc_index++];
     /* Copy the appropriate number of arguments for the opcode */

@@ -67,10 +67,6 @@
 #error GUEST_BASE not supported on this host.
 #endif
 
-static void REGPARM test(void) {
-  __asm__ ("nop\n\t");
-}
-
 /* Forward declarations for functions declared in tcg-target.c and used here. */
 static void tcg_target_init(TCGContext *s);
 static void tcg_target_qemu_prologue(TCGContext *s);

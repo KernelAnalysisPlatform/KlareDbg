@@ -148,13 +148,13 @@ void track_store(target_ulong addr, uint64_t data, int size) {
   add_change(addr, data, IS_MEM | IS_WRITE | size);
 }
 
-void track_read(target_ulong base, target_ulong offset, target_ulong data, int size) {
+void REGPARM track_read(target_ulong base, target_ulong offset, target_ulong data, int size) {
   QIRA_DEBUG("(%d) read:  %lx+l%x:%d = %x\n", GLOBAL_logstate->changelist_number, base, offset, size, data);
   if ((int)offset < 0) return;
   add_change(offset, data, size);
 }
 
-void track_write(target_ulong base, target_ulong offset, target_ulong data, int size) {
+void REGPARM track_write(target_ulong base, target_ulong offset, target_ulong data, int size) {
   QIRA_DEBUG("(%d) write: %lx+%lx:%d = %x\n", GLOBAL_logstate->changelist_number, base, offset, size, data);
   if ((int)offset < 0) return;
   add_change(offset, data, IS_WRITE | size);

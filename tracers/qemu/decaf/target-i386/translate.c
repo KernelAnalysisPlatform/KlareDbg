@@ -2803,7 +2803,49 @@ static void gen_eob(DisasContext *s)
     //     gen_helper_debug();
     if (s->tf) {
     	gen_helper_single_step();
-    } else {
+    }else {
+    	if(DECAF_is_callback_needed(DECAF_INSN_END_CB))
+    		gen_helper_DECAF_invoke_insn_end_callback(cpu_env);
+
+		//Heng: now we change the opcode-specific callback to instruction end.
+		if(DECAF_is_callback_needed(DECAF_OPCODE_RANGE_CB) &&
+				DECAF_is_callback_needed_for_opcode(cur_opcode)) {
+			TCGv t_cur_pc, t_next_pc, t_opcode;
+
+			t_cur_pc = tcg_const_ptr(cur_pc);
+			t_next_pc = tcg_temp_new_ptr();
+			tcg_gen_ld_tl(t_next_pc, cpu_env, offsetof(CPUState, eip));
+			t_opcode = tcg_const_i32(cur_opcode);
+			gen_helper_DECAF_invoke_opcode_range_callback(cpu_env, t_cur_pc, t_next_pc, t_opcode);
+
+			tcg_temp_free(t_cur_pc);
+			tcg_temp_free(t_next_pc);
+			tcg_temp_free_i32(t_opcode);
+		}
+
+
+    	//LOK: Changed over to the new block end interface
+    	//    	if(DECAF_is_callback_needed(DECAF_BLOCK_END_CB))
+    	//    		gen_helper_DECAF_invoke_callback(tcg_const_i32(DECAF_BLOCK_END_CB));
+    	//By the time this function is called, the env->eip has already been updated to the
+    	//  new target. Keep this in mind. Take a look at the gen_jmp_tb code below
+
+    	if(DECAF_is_BlockEndCallback_needed(s->tb->pc, next_pc))
+    	{
+          //create temporary variables for tb and from
+          //LOK: Updated to use ptr and plain TCGv (target_long) types instead of i32
+          TCGv_ptr tmpTb = tcg_const_ptr((tcg_target_ulong)s->tb);
+          //LOK: We use tcg_temp_new since that defines a new target_ulong
+          // which can be confirmed inside tcg-op.h:2141
+    	  TCGv tmpFrom = tcg_temp_new();
+
+    	  tcg_gen_movi_tl(tmpFrom, cur_pc);
+          gen_helper_DECAF_invoke_block_end_callback(cpu_env, tmpTb, tmpFrom);
+
+          tcg_temp_free(tmpFrom);
+          tcg_temp_free_ptr(tmpTb);
+    	}
+
     	tcg_gen_exit_tb(0);
     }
     s->is_jmp = DISAS_TB_JUMP;
@@ -8068,10 +8110,10 @@ static inline void gen_intermediate_code_internal(CPUState *env,
     flags = tb->flags;
 
     /* KLDBG: In target address, singlestep mode should be enabled */
-    // if (mod_addr <= tb->pc && tb->pc < mod_addr + mod_size)
-    //   env->singlestep_enabled = 1;
-    // else
-    //   env->singlestep_enabled = 0;
+    if (mod_addr <= tb->pc && tb->pc < mod_addr + mod_size)
+      env->singlestep_enabled = 1;
+    else
+      env->singlestep_enabled = 0;
 
     dc->pe = (flags >> HF_PE_SHIFT) & 1;
     dc->code32 = (flags >> HF_CS32_SHIFT) & 1;

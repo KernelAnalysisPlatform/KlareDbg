@@ -268,7 +268,7 @@ def getinstructions(forknum, clnum, clstart, clend):
       rret['instruction'] = "lib_func"
     else:
       rret['instruction'] = instr.__str__() #i == clnum
-      
+
     print '0x%lx %s\n' % (rret['address'], rret['instruction'])
     # check if static fails at this
     if rret['instruction'] == "":
@@ -371,6 +371,8 @@ def getregisters(forknum, clnum):
   # 50 is a sane limit here, we don't really need to mark lib calls correctly
   cls = trace.db.fetch_changes_by_clnum(clnum+1, 50)
   regs = trace.db.fetch_registers(clnum)
+  print "getregisters(%d,%d)" % (forknum, clnum)
+  print regs
 
   for i in range(0, len(REGS)):
     if REGS[i] == None:
