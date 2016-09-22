@@ -4,7 +4,7 @@ var scripts = ["./client/controls.js", "./client/ida.js", "./client/idump.js", "
                "./client/static/static.js", "./client/static/graph.js"];
 
 $(document).ready(function() {
-  var myDocker = new wcDocker(document.body, {"theme": "qira_theme", "themePath": "", "allowContextMenu": false});
+  var myDocker = new wcDocker(document.body, {"theme": "qira_theme", "themePath": "./", "allowContextMenu": false});
 
   var req = new XMLHttpRequest();
   req.open('GET', '/hasstatic', false);
@@ -77,12 +77,12 @@ $(document).ready(function() {
     },
   });
 
-  var timelinePanel = myDocker.addPanel("Timeline", wcDocker.DOCK.LEFT, null);
+  //var timelinePanel = myDocker.addPanel("Timeline", wcDocker.DOCK.LEFT, null);
 
   // Limit the width of the vtimeline. Scrollbar exists if it overflows.
-  timelinePanel.maxSize(100, 0);
+  //timelinePanel.maxSize(100, 0);
 
-  var controlPanel = myDocker.addPanel("Control", wcDocker.DOCK.RIGHT, timelinePanel);
+  var controlPanel = myDocker.addPanel("Control", wcDocker.DOCK.TOP, null);
 
   controlPanel.maxSize(1000, 70);
   if (has_static) {
@@ -90,12 +90,12 @@ $(document).ready(function() {
     var flatPanel = myDocker.addPanel("Flat", wcDocker.DOCK.BOTTOM, cfgPanel, {h: 200});
   }
 
-  var idumpPanel = myDocker.addPanel("idump", wcDocker.DOCK.BOTTOM, controlPanel);
-  var dynamicPanel = myDocker.addPanel("Dynamic", wcDocker.DOCK.BOTTOM, idumpPanel);
+  var idumpPanel = myDocker.addPanel("idump", wcDocker.DOCK.BOTTOM, controlPanel, {h: 700, w:900});
+  var dynamicPanel = myDocker.addPanel("Dynamic", wcDocker.DOCK.RIGHT, idumpPanel, {h: 700, w:400});
   //dynamicPanel.maxSize(0, 82);
 
-  var memoryPanel = myDocker.addPanel("Memory", wcDocker.DOCK.BOTTOM, dynamicPanel, {h: 400});
-  var stracePanel = myDocker.addPanel("strace", wcDocker.DOCK.BOTTOM, dynamicPanel, {h: 200});
+  var memoryPanel = myDocker.addPanel("Memory", wcDocker.DOCK.BOTTOM, idumpPanel, {h: 340});
+  var stracePanel = myDocker.addPanel("strace", wcDocker.DOCK.BOTTOM, dynamicPanel, {h: 340});
 
 
 
@@ -121,8 +121,8 @@ $(document).ready(function() {
   }
 
   if (has_static) {
-    $.when(timelineDef, idumpDef, memoryDef, straceDef, controlDef, dynamicDef, cfgDef, flatDef).done(is_done);
+    $.when(idumpDef, memoryDef, straceDef, controlDef, dynamicDef, cfgDef, flatDef).done(is_done);
   } else {
-    $.when(timelineDef, idumpDef, memoryDef, straceDef, controlDef, dynamicDef).done(is_done);
+    $.when(idumpDef, memoryDef, straceDef, controlDef, dynamicDef).done(is_done);
   }
 });

@@ -1,9 +1,12 @@
+@import "theme-cnst.css";
 html, body {
   height: 100%;
   margin: 0;
   overflow: hidden;
   padding: 0;
   width: 100%;
+  background-color: #373737;
+  font-size: 110%;
 }
 
 
@@ -18,7 +21,6 @@ td {
 
 .dynamic-info {
   width: 100%;
-  background-color: #AAAAAA;
 }
 
 .splitter {
@@ -85,7 +87,8 @@ td {
 
 .panelthing {
   border: 1px solid gray;
-  background-color: #DDDDDD;
+  background: #373737;
+  color: #dfe1e8;
 }
 
 /* instruction dump */
@@ -95,7 +98,7 @@ td {
   overflow-x: auto;
 }
 
-#idump {  
+#idump {
   padding: 5px;
   overflow-y: hidden;
   overflow-x: auto;
@@ -130,4 +133,3 @@ td {
   position: absolute;
   top: 0;
 }
-

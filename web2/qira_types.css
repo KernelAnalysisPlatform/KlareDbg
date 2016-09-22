@@ -26,7 +26,7 @@
 }
 
 .halfhighlight {
-  background: rgba(255, 119, 119, 0.3);
+  background: rgba(230, 235, 0, 0.4);
 }
 
 #haddrline {
@@ -106,7 +106,7 @@
 }
 
 #regviewer {
-  /*background-color: #DDDDDD;*/
+  background-color: #373737;
   padding: 2px;
   white-space: normal;
   /*border: 1px solid black;*/
@@ -127,7 +127,7 @@
 }
 
 .change {
-  color: blue;
+  color: red;
   width: 6em;
   display: inline-block;
 }
@@ -170,7 +170,7 @@
 }
 
 .datainstruction {
-  color: #CC0000;
+  color: #39BF3B;
 }
 
 .datamemory {
@@ -193,6 +193,7 @@
 }*/
 #hexdump {
   height: 100%;
+  background-color: #373737;
 }
 
 .hexdumpdatainstruction {
@@ -224,16 +225,16 @@
 }
 
 .regread {
-  background-color: #666644;
+  background-color: rgba(30, 90, 230, 0.5);
 }
 
 .regwrite {
-  background-color: #EEEE44;
+  background-color: rgba(50, 210, 10, 0.5);
 }
 
 .regreadwrite {
   /* order is lost here */
-  background: linear-gradient(to right, #666644, #EEEE44);
+  background: rgba(255, 90, 10, 0.5);
 }
 
 #strace {
@@ -267,4 +268,3 @@
 .op {
   /*color: #3E0854;*/
 }
-
