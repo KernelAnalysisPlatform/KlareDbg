@@ -95,7 +95,7 @@ $(document).ready(function() {
   //dynamicPanel.maxSize(0, 82);
 
   var memoryPanel = myDocker.addPanel("Memory", wcDocker.DOCK.BOTTOM, idumpPanel, {h: 340});
-  var stracePanel = myDocker.addPanel("strace", wcDocker.DOCK.BOTTOM, dynamicPanel, {h: 340});
+  var stracePanel = myDocker.addPanel("strace", wcDocker.DOCK.BOTTOM, dynamicPanel, {h: 250});
 
 
 

@@ -31,7 +31,7 @@ function on_instructions(msg) { DS("instructions");
 
     // compute the dynamic stuff
     // TODO: hacks for trail stuff working, shitty off by ones here
-    if (i >= 5 || ins.clnum >= (clnum - backward_context_size)) {
+    if (i >= 14 || ins.clnum >= (clnum - backward_context_size)) {
       idump +=
          '<div class="instruction" style="margin-left: '+(ins.depth*10)+'px">'+
           '<div class="change '+(ins.slice ? "halfhighlight": "")+' clnum clnum_'+ins.clnum+'">'+ins.clnum+'</div> '+

@@ -170,7 +170,7 @@
 }
 
 .datainstruction {
-  color: #39BF3B;
+  color: #22AB24;
 }
 
 .datamemory {
@@ -229,7 +229,7 @@
 }
 
 .regwrite {
-  background-color: rgba(50, 210, 10, 0.5);
+  background-color: rgba(0, 0, 0, 0.5);
 }
 
 .regreadwrite {
