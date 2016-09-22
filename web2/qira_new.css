@@ -1,0 +1,34 @@
+.name {
+  /*color: purple !important;*/
+  /*background-color: #cccccc;*/
+}
+
+.autohighlight {
+  background-color: #FF7777 !important;
+}
+
+.autohighlighti {
+  background-color: #FFAA77;
+}
+
+.insaddr {
+  min-width: 7em;
+  display: inline-block;
+}
+
+.comment {
+  color: blue;
+}
+
+.flat {
+  border: 1px solid gray;
+  background-color: #CCCCCC;
+  padding: 10px;
+}
+
+#outergbox {
+  position: absolute;
+  height: 100%;
+  width: 100%;
+}
+
