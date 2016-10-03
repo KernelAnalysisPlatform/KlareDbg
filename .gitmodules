@@ -1,0 +1,3 @@
+[submodule "static2/kap"]
+	path = static2/kap
+	url = https://github.com/KernelAnalysisPlatform/kap
