@@ -72,6 +72,9 @@ class Static:
     # concept from qira_program
     self.base_memory = {}
 
+    # kernel module loaded address
+    self.load_address = 0xffffffffc0084000
+
     #pass static engine as an argument for testing
     if static_engine is None:
       static_engine = qira_config.STATIC_ENGINE
@@ -99,16 +102,21 @@ class Static:
         def analyze_functions(x):
           dat = ida.fetch_tags()
           print dat
+    elif static_engine == "kap":
+      sys.path.append(os.path.join(qira_config.BASEDIR, "static2", "kap", "linux"))
+      sys.path.append(os.path.join(qira_config.BASEDIR, "static2", "builtin"))
+      import loader
+      import analyzer
     else:
       # run the elf loader
       sys.path.append(os.path.join(qira_config.BASEDIR, "static2", "builtin"))
       import loader
       import analyzer
-    self.analyzer = analyzer
-    #loader.load_binary(self)
 
-    if self.debug >= 1:
-      print "*** elf loaded"
+    self.analyzer = analyzer
+    loader.load_binary(self)
+
+    print "*** elf loaded"
 
     """
     # check the cache
@@ -258,6 +266,7 @@ class Static:
     # segments should have an idea of segment permission
     self['segments'].append((address, len(dat)))
     self.base_memory[(address, address+len(dat))] = dat
+    print 'add chunk(0x%lx, 0x%lx)' % (address, address + len(dat))
 
   def process(self):
     self.analyzer.analyze_functions(self)

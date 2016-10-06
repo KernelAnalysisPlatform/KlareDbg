@@ -269,7 +269,7 @@ class CsInsn(object):
       self.decoded = True
       self.regs_read = self.i.regs_read
       self.regs_write = self.i.regs_write
-
+      print hex(self.address), ":", self.i.mnemonic, self.i.op_str
       self.dtype = DESTTYPE.none
       if arch == 'i386' or arch == 'x86-64':
           if self.i.mnemonic == "call":
@@ -313,10 +313,9 @@ class CsInsn(object):
   #we don't want to break str(x), but sometimes we want to augment the
   #diassembly with dynamic info. so we include optional arguments here
   def __str__(self, trace=None, clnum=None):
-    # if self.decoded:
-    #   return "{}\t{}".format(self.i.mnemonic, self._get_operand_s(trace, clnum))
-    return stri
-
+    if self.decoded:
+      return "{}\t{}".format(self.i.mnemonic, self._get_operand_s(trace, clnum))
+    return ""
   def is_jump(self):
     if not self.decoded:
       return False
@@ -597,28 +596,25 @@ class Tags:
     return tag in self.backing
 
   def __getitem__(self, tag):
-    # if tag in self.backing:
-    #   return self.backing[tag]
-    # else:
-    #   # should reading the instruction tag trigger disasm?
-    #   # and should dests be a seperate tag?
-    #   if tag == "instruction":
-    #     dat = self.static.memory(self.address, 0x10)
-    #     # arch should probably come from the address with fallthrough
-    #     self.backing['instruction'] = Instruction(dat, self.address, self.static[self.address]['arch'])
-    #     self.backing['len'] = self.backing['instruction'].size()
-    #     self.backing['type'] = 'instruction'
-    #     return self.backing[tag]
-    #   if tag == "crefs" or tag == "xrefs":
-    #     # crefs has a default value of a new array
-    #     self.backing[tag] = set()
-    #     return self.backing[tag]
-    #   if tag in self.static.global_tags:
-    #     return self.static.global_tags[tag]
-    #   return None
-    if tag == "instruction" and tag in self.backing:
-        return self.backing['instruction']
-    return None
+    if tag in self.backing:
+      return self.backing[tag]
+    else:
+      # should reading the instruction tag trigger disasm?
+      # and should dests be a seperate tag?
+      if tag == "instruction":
+        dat = self.static.memory(self.address, 0x10)
+        # arch should probably come from the address with fallthrough
+        self.backing['instruction'] = Instruction(dat, self.address, self.static[self.address]['arch'])
+        self.backing['len'] = self.backing['instruction'].size()
+        self.backing['type'] = 'instruction'
+        return self.backing[tag]
+      if tag == "crefs" or tag == "xrefs":
+        # crefs has a default value of a new array
+        self.backing[tag] = set()
+        return self.backing[tag]
+      if tag in self.static.global_tags:
+        return self.static.global_tags[tag]
+      return None
 
   def __delitem__(self, tag):
     try:
@@ -627,14 +623,8 @@ class Tags:
       pass
 
   def __setitem__(self, tag, val):
-    # if tag == "instruction" and type(val) == str:
-    #   raise Exception("instructions shouldn't be strings")
-    if tag == "instruction":
-        # XXX: Arch is set to x86-64 temporary.
-       dat = b"\xde\xad\xbe\xef"
-       self.backing['instruction'] = Instruction(dat, self.address, "x86-64", val)
-       self.backing['len'] = self.backing['instruction'].size()
-       self.backing['type'] = 'instruction'
+    if tag == "instruction" and type(val) == str:
+      raise Exception("instructions shouldn't be strings")
     if tag == "name":
       # name can change by adding underscores
       val = self.static.set_name(self.address, val)

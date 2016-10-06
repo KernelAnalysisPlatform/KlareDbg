@@ -258,68 +258,72 @@ def getinstructions(forknum, clnum, clstart, clend):
   def get_instruction(i):
     rret = trace.db.fetch_changes_by_clnum(i, 1)
     print 'get_instruction %d' % (i)
+    print rret
     if len(rret) == 0:
       return None
     else:
       rret = rret[0]
 
     instr = program.static[rret['address']]['instruction']
-    if instr == None:
+    rret['instruction'] = instr.__str__() #i == clnum
+    if rret['instruction'] == "":
       rret['instruction'] = "lib_func"
-    else:
-      rret['instruction'] = instr.__str__() #i == clnum
 
     print '0x%lx %s\n' % (rret['address'], rret['instruction'])
     # check if static fails at this
-    if rret['instruction'] == "":
-      # TODO: wrong place to get the arch
-      arch = program.static[rret['address']]['arch']
+    # if rret['instruction'] == "":
+    #   # TODO: wrong place to get the arch
+    #   arch = program.static[rret['address']]['arch']
+    #
+    #   # we have the address and raw bytes, disassemble
+    #   raw = trace.fetch_raw_memory(i, rret['address'], rret['data'])
+    #   rret['instruction'] = str(model.Instruction(raw, rret['address'], arch))
+    #
+    # #display_call_args calls make_function_at
+    # if qira_config.WITH_STATIC:
+    #   if instr.is_call():
+    #     args = qira_analysis.display_call_args(instr,trace,i)
+    #     if args != "":
+    #       rret['instruction'] += " {"+args+"}"
 
-      # we have the address and raw bytes, disassemble
-      raw = trace.fetch_raw_memory(i, rret['address'], rret['data'])
-      rret['instruction'] = str(model.Instruction(raw, rret['address'], arch))
-
-    #display_call_args calls make_function_at
-    if qira_config.WITH_STATIC:
-      if instr.is_call():
-        args = qira_analysis.display_call_args(instr,trace,i)
-        if args != "":
-          rret['instruction'] += " {"+args+"}"
-
-    if 'name' in program.static[rret['address']]:
-      #print "setting name"
-      rret['name'] = program.static[rret['address']]['name']
-    if 'comment' in program.static[rret['address']]:
-      rret['comment'] = program.static[rret['address']]['comment']
-
-    if i in slce:
-      rret['slice'] = True
-    else:
-      rret['slice'] = False
+    # if 'name' in program.static[rret['address']]:
+    #   #print "setting name"
+    #   rret['name'] = program.static[rret['address']]['name']
+    # if 'comment' in program.static[rret['address']]:
+    #   rret['comment'] = program.static[rret['address']]['comment']
+    #
+    # if i in slce:
+    #   rret['slice'] = True
+    # else:
+    #   rret['slice'] = False
     # for numberless javascript
     rret['address'] = ghex(rret['address'])
-    try:
-      rret['depth'] = trace.dmap[i - trace.minclnum]
-    except:
-      rret['depth'] = 0
+    # try:
+    #   rret['depth'] = trace.dmap[i - trace.minclnum]
+    # except:
+    #   rret['depth'] = 0
 
     # hack to only display calls
-    if True or instr.is_call():
-    #if instr.is_call():
-      return rret
-    else:
-      return None
+    # if True or instr.is_call():
+    # #if instr.is_call():
+    #   return rret
+    # else:
+    #   return None
+    return rret
 
   top = []
   clcurr = clnum-1
   while len(top) != (clnum - clstart) and clcurr >= 0:
+    print clcurr
     rret = get_instruction(clcurr)
     if rret != None:
       top.append(rret)
     clcurr -= 1
 
   clcurr = clnum
+
   while len(ret) != (clend - clnum) and clcurr <= clend:
+    print clcurr
     rret = get_instruction(clcurr)
     if rret != None:
       ret.append(rret)

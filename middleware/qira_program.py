@@ -39,7 +39,7 @@ def which(prog):
 
 # things that don't cross the fork
 class Program:
-  def __init__(self, image, args=[], qemu_args=[]):
+  def __init__(self, image, binary, args=[], qemu_args=[]):
     # create the logs dir
     try:
       os.mkdir(qira_config.TRACE_FILE_BASE)
@@ -48,11 +48,13 @@ class Program:
 
     # call which to match the behavior of strace and gdb
     self.image = which(image)
+    self.binary = which(binary)
     #self.proghash = sha1(open(self.image, "rb").read()).hexdigest()
     print "*** image file is",self.image
+    print "*** binary file is",self.binary
 
     # this is always initted, as it's the tag repo
-    self.static = static2.Static(self.image)
+    self.static = static2.Static(self.binary)
 
     # no traces yet
     self.traces = {}
@@ -82,13 +84,64 @@ class Program:
 
   def identify_guest_image(self):
     qemu_dir = os.path.dirname(os.path.realpath(__file__))+"/../tracers/qemu/"
-    self.tregs = arch.X64REGS
-    self.qirabinary = qemu_dir + "qira-x86_64"
-    self.qirabinary = os.path.realpath(self.qirabinary)
-    print "**** using",self.qirabinary
-    self.runnable = True
-    # XXX: Set fb x86_64 temporary
-    self.fb = 0x3e
+
+    # pmaps is global, but updated by the traces
+    progdat = open(self.binary, "rb").read(0x800)
+
+    CPU_TYPE_ARM = "\x0C"
+    CPU_TYPE_ARM64 = "\x01\x00\x00\x0C"
+
+    CPU_SUBTYPE_ARM_ALL = "\x00"
+    CPU_SUBTYPE_ARM_V4T = "\x05"
+    CPU_SUBTYPE_ARM_V6 = "\x06"
+    CPU_SUBTYPE_ARM_V5TEJ = "\x07"
+    CPU_SUBTYPE_ARM_XSCALE = "\x08"
+    CPU_SUBTYPE_ARM_V7 = "\x09"
+    CPU_SUBTYPE_ARM_V7F = "\x0A"
+    CPU_SUBTYPE_ARM_V7S = "\x0B"
+    CPU_SUBTYPE_ARM_V7K = "\x0C"
+    CPU_SUBTYPE_ARM_V6M = "\x0E"
+    CPU_SUBTYPE_ARM_V7M = "\x0F"
+    CPU_SUBTYPE_ARM_V7EM = "\x10"
+
+    CPU_SUBTYPE_ARM = [
+                         CPU_SUBTYPE_ARM_V4T,
+                         CPU_SUBTYPE_ARM_V6,
+                         CPU_SUBTYPE_ARM_V5TEJ,
+                         CPU_SUBTYPE_ARM_XSCALE,
+                         CPU_SUBTYPE_ARM_V7,
+                         CPU_SUBTYPE_ARM_V7F,
+                         CPU_SUBTYPE_ARM_V7K,
+                         CPU_SUBTYPE_ARM_V6M,
+                         CPU_SUBTYPE_ARM_V7M,
+                         CPU_SUBTYPE_ARM_V7EM
+                      ]
+
+    CPU_SUBTYPE_ARM64 = [
+                         CPU_SUBTYPE_ARM_ALL,
+                         CPU_SUBTYPE_ARM_V7S
+                        ]
+
+    MACHO_MAGIC = "\xFE\xED\xFA\xCE"
+    MACHO_CIGAM = "\xCE\xFA\xED\xFE"
+    MACHO_MAGIC_64 = "\xFE\xED\xFA\xCF"
+    MACHO_CIGAM_64 = "\xCF\xFA\xED\xFE"
+    MACHO_FAT_MAGIC = "\xCA\xFE\xBA\xBE"
+    MACHO_FAT_CIGAM = "\xBE\xBA\xFE\xCA"
+    MACHO_P200_FAT_MAGIC = "\xCA\xFE\xD0\x0D"
+    MACHO_P200_FAT_CIGAM = "\x0D\xD0\xFE\xCA"
+
+    # Linux binaries
+    if progdat[0:4] == "\x7FELF":
+      # get file type
+      self.fb = struct.unpack("H", progdat[0x12:0x14])[0]   # e_machine
+      if self.fb == 0x3e:
+        self.tregs = arch.X64REGS
+        self.qirabinary = qemu_dir + "qira-x86_64"
+
+      self.qirabinary = os.path.realpath(self.qirabinary)
+      print "**** using",self.qirabinary
+      self.runnable = True
 
   def clear(self):
     # probably always good to do except in development of middleware
@@ -150,9 +203,7 @@ class Program:
       cnt += 1
 
       # trigger disasm
-      #d = self.static[addr]['instruction']
-      self.static[addr]['instruction'] = inst
-      print addr, inst
+      d = self.static[addr]['instruction']
     #sys.stdout.write("%d..." % cnt); sys.stdout.flush()
 
   def delete_old_runs(self):

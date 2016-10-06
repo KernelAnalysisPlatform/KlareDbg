@@ -19,6 +19,7 @@ if __name__ == '__main__':
   parser.add_argument('-s', "--server", help="bind on port 4000. like socat", action="store_true")
   #parser.add_argument('-t', "--tracelibraries", help="trace into all libraries", action="store_true")
   parser.add_argument('image', help="path to the image file")
+  parser.add_argument('binary', help="path to a kernel module")
   parser.add_argument('args', nargs='*', help="arguments to the binary")
   parser.add_argument("--gate-trace", metavar="ADDRESS", help="don't start tracing until this address is hit")
   parser.add_argument("--flush-cache", help="flush all QIRA caches", action="store_true")
@@ -55,6 +56,10 @@ if __name__ == '__main__':
   qira_config.SOCAT_PORT = args.socat_port
   qira_config.FORK_PORT = args.socat_port + 1
 
+  print "*** using static"
+  qira_config.WITH_STATIC = False
+  qira_config.STATIC_ENGINE = "kap"
+
   if args.flush_cache:
     print "*** flushing caches"
     os.system("rm -rfv /tmp/qira*")
@@ -66,7 +71,7 @@ if __name__ == '__main__':
     qemu_args.append(args.gate_trace)
 
   # creates the file symlink, program is constant through server run
-  program = qira_program.Program(args.image, args.args, qemu_args)
+  program = qira_program.Program(args.image, args.binary, args.args, qemu_args)
 
   is_qira_running = 1
   try:
