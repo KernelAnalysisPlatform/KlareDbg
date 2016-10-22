@@ -91,7 +91,7 @@ void print_loaded_modules(CPUState *env)
                               &next_module);
 
   	next_module -= OFFSET_PROFILE.module_list;
-	
+
 	char module_name[MAX_PARAM_PREFIX_LEN];
 
     monitor_printf(default_mon, "%20s     %10s \n", "Module", "Size");
@@ -104,7 +104,7 @@ void print_loaded_modules(CPUState *env)
 
         module_name[MAX_PARAM_PREFIX_LEN - 1] = '\0';
 
-					
+
         DECAF_read_ptr(env, next_module + OFFSET_PROFILE.module_size,
                                 &module_size);
 
@@ -112,7 +112,7 @@ void print_loaded_modules(CPUState *env)
 
 		DECAF_read_ptr(env, next_module + OFFSET_PROFILE.module_list ,
                               &next_module);
-			  
+
         next_module -= OFFSET_PROFILE.module_list;
 
         if(first_module == next_module)
@@ -127,7 +127,7 @@ void print_loaded_modules(CPUState *env)
 
 void print_loaded_modules_old(CPUState *env)
 {
-	
+
 
 }
 
@@ -145,7 +145,7 @@ static void traverse_kmod_list(CPUState *env)
                               &next_module);
 
   	next_module -= OFFSET_PROFILE.module_list;
-	
+
 	char module_name[MAX_PARAM_PREFIX_LEN];
 
     while(true)
@@ -155,11 +155,11 @@ static void traverse_kmod_list(CPUState *env)
 
         //module_name[MAX_PARAM_PREFIX_LEN - 1] = '\0';
 		module_name[31] = '\0';
-			
+
 
 		if(!VMI_find_kmod_by_name(module_name))
 		{
-								
+
 	        DECAF_read_ptr(env, next_module + OFFSET_PROFILE.module_size,
 	                                &module_size);
 
@@ -176,12 +176,12 @@ static void traverse_kmod_list(CPUState *env)
 			//monitor_printf(default_mon, "kernel module %s base %x\n", module_name, module_base);
             VMI_add_module(mod, module_name);
 
-	        VMI_insert_module(0, module_base , mod);
+	        //VMI_insert_module(0, module_base , mod);
 		}
 
 		DECAF_read_ptr(env, next_module + OFFSET_PROFILE.module_list ,
                               &next_module);
-			  
+
         next_module -= OFFSET_PROFILE.module_list;
 
         if(first_module == next_module)
@@ -250,16 +250,16 @@ static void traverse_task_struct_add(CPUState *env)
         if (!VMI_find_process_by_pgd(proc_cr3))
         {
 
-            // get task_pid
-            BREAK_IF(DECAF_read_ptr(env, next_task + OFFSET_PROFILE.ts_tgid,
-                                    &task_pid) < 0);
-
-            // get parent task's base address
-            BREAK_IF(DECAF_read_ptr(env, next_task + OFFSET_PROFILE.ts_real_parent,
-                                    &ts_real_parent) < 0
-                     ||
-                     DECAF_read_ptr(env, ts_real_parent + OFFSET_PROFILE.ts_tgid,
-                                    &ts_parent_pid) < 0);
+            // // get task_pid
+            // BREAK_IF(DECAF_read_ptr(env, next_task + OFFSET_PROFILE.ts_tgid,
+            //                         &task_pid) < 0);
+            //
+            // // get parent task's base address
+            // BREAK_IF(DECAF_read_ptr(env, next_task + OFFSET_PROFILE.ts_real_parent,
+            //                         &ts_real_parent) < 0
+            //          ||
+            //          DECAF_read_ptr(env, ts_real_parent + OFFSET_PROFILE.ts_tgid,
+            //                         &ts_parent_pid) < 0);
 
             process* pe = new process();
             pe->pid = task_pid;
@@ -303,10 +303,10 @@ static process *traverse_task_struct_remove(CPUState *env)
 
         if (mm != 0)
         {
-            DECAF_read_ptr(env, next_task + OFFSET_PROFILE.ts_tgid,
-                           &task_pid);
-            // Collect PIDs of all processes in the task linked list
-            pids.insert(task_pid);
+            // DECAF_read_ptr(env, next_task + OFFSET_PROFILE.ts_tgid,
+            //                &task_pid);
+            // // Collect PIDs of all processes in the task linked list
+            // pids.insert(task_pid);
         }
 
     }
@@ -324,7 +324,7 @@ static process *traverse_task_struct_remove(CPUState *env)
 
     if(right_pid == 0)
 		return NULL;
-	
+
 	//monitor_printf(default_mon,"process with pid [%08x]  ended\n",right_pid);
 
     VMI_remove_process(right_pid);
@@ -438,7 +438,7 @@ void traverse_mmap(CPUState *env, void *opaque)
 
         if(VMI_find_module_by_base(proc->cr3, vma_vm_start) != mod)
         {
-            VMI_insert_module(proc->pid, mod_vm_start , mod);
+            //VMI_insert_module(proc->pid, mod_vm_start , mod);
         }
 
 next:

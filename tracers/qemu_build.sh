@@ -15,5 +15,5 @@ else
 fi
 
 cd qemu/qemu-latest
-./configure --target-list=x86_64-softmmu --disable-vmi
+./configure --target-list=x86_64-softmmu
 make -j $(grep processor < /proc/cpuinfo | wc -l)

@@ -43,7 +43,7 @@ extern FILE *guestlog;
 void parse_process(const char *log);
 void parse_module(const char *log);
 
-//extern process * kernel_proc ; 
+//extern process * kernel_proc ;
 
 void handle_guest_message(const char *message)
 {
@@ -104,10 +104,10 @@ int is_fullname_retrieved(process *proc)
     for (iter = proc->module_list.begin(); iter != proc->module_list.end();
         iter++) {
        m = iter->second;
-       
+
        if(strlen(m->fullname) == 0)
        {
-         
+
          //monitor_printf(default_mon, "upating mod len");
 
         return -1;
@@ -141,7 +141,7 @@ int procmod_insert_modinfo(uint32_t pid, uint32_t cr3, const char *name,
 
   if(strlen(proc->name) ==0)
   {
-   
+
 
 
    // monitor_printf(default_mon, "insert modinfo \n");
@@ -159,13 +159,13 @@ int procmod_insert_modinfo(uint32_t pid, uint32_t cr3, const char *name,
   strcpy(m->name, name);
   strcpy(m->fullname, full_name);
   //monitor_printf(default_mon, "name %s Fullname %s\n", name, full_name);
-  VMI_insert_module(pid, base, m);
+  //VMI_insert_module(pid, base, m);
   return 0;
 }
 
 int procmod_remove_modinfo(uint32_t pid, uint32_t base)
 {
-   
+
    VMI_remove_module(pid, base);
     return 0;
 }
@@ -218,7 +218,7 @@ int procmod_removeproc(uint32_t pid)
 
 int procmod_update_name(uint32_t pid, char *name)
 {
-	
+
   VMI_update_name( pid, name);
 	return 0;
 }
@@ -233,9 +233,9 @@ static int procmod_remove_all()
 
 // void update_proc(void *opaque)
 // {
- 
+
 //   monitor_printf(default_mon, "updating proc \n");
-// //    long taskaddr = 0xC033C300; 
+// //    long taskaddr = 0xC033C300;
 //     int pid;
 //     uint32_t cr3, pgd, mmap;
 //     uint32_t nextaddr = 0;
@@ -248,7 +248,7 @@ static int procmod_remove_all()
 //     do {
 // 	pid = get_pid(nextaddr);
 // 	pgd = get_pgd(nextaddr);
-// 	cr3 = pgd - 0xc0000000;	//subtract a page offset 
+// 	cr3 = pgd - 0xc0000000;	//subtract a page offset
 // 	get_name(nextaddr, comm, 512);
 // 	procmod_createproc(pid, -1, cr3, comm);	//XXX: parent pid is not supported
 
@@ -256,7 +256,7 @@ static int procmod_remove_all()
 // 	while (0 != mmap) {
 // 	    get_mod_name(mmap, comm, 512);
 // 	    //term_printf("0x%08lX -- 0x%08lX %s\n", get_vmstart(env, mmap),
-// 	    //            get_vmend(env, mmap), comm); 
+// 	    //            get_vmend(env, mmap), comm);
 // 	    int base = get_vmstart(mmap);
 // 	    int size = get_vmend(mmap) - get_vmstart(mmap);
 // 	 //  TODO: FIXME
@@ -295,14 +295,14 @@ static int procmod_remove_all()
 
 int procmod_init()
 {
-  
+
   process *kernel_proc = new process();
   kernel_proc->cr3 = 0;
   strcpy(kernel_proc->name, "<kernel>");
   kernel_proc->pid = 0;
   VMI_create_process(kernel_proc);
 
-  
+
 /*
   FILE *guestlog = fopen("guest.log", "r");
   char syslogline[GUEST_MESSAGE_LEN];
@@ -374,7 +374,7 @@ void parse_process(const char *log)
 
 void parse_module(const char *log)
 {
- 
+
   uint32_t pid, cr3, base, size;
   char mod[GUEST_MESSAGE_LEN];
   char full_mod[GUEST_MESSAGE_LEN]="";
@@ -388,7 +388,7 @@ void parse_module(const char *log)
                    &size, full_mod, &c) <5 )
     //no valid format is found
     return;
-  
+
   switch (c) {
   case '-':
           procmod_remove_modinfo(pid, base);
@@ -398,20 +398,18 @@ void parse_module(const char *log)
           break;
   default:
       assert(false);
-  }  
+  }
 }
 
 
 int is_guest_windows()
 {
 #ifdef TARGET_I386
-    //FIXME: we use a very simple hack here. Windows uses FS segment register to store 
-    // the current process context, while Linux does not. We may need better heuristics 
+    //FIXME: we use a very simple hack here. Windows uses FS segment register to store
+    // the current process context, while Linux does not. We may need better heuristics
     // when we need to support more guest systems.
     return (cpu_single_env->segs[R_FS].selector != 0);
 #else
     return 0;
 #endif
 }
-
-

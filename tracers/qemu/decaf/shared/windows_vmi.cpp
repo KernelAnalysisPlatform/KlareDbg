@@ -296,7 +296,7 @@ static void update_kernel_modules(CPUState *env, target_ulong vaddr) {
 			VMI_add_module(curr_entry, key);
 		}
 
-		VMI_insert_module(kernel_proc->pid, base, curr_entry);
+		//VMI_insert_module(kernel_proc->pid, base, curr_entry);
 
 next:
 		DECAF_read_mem(env, curr_mod, 4, &next_mod);
@@ -360,7 +360,7 @@ static void update_loaded_user_mods_with_peb(CPUState* env, process *proc,
 				VMI_add_module(curr_entry, key);
 			}
 
-			VMI_insert_module(proc->pid, base, curr_entry);
+			//VMI_insert_module(proc->pid, base, curr_entry);
 			//message_m(proc->pid, cr3, base, curr_entry);
 
 		}
@@ -427,7 +427,7 @@ static void extract_export_table(IMAGE_NT_HEADERS *nth, uint32_t cr3, uint32_t b
 		name[127] = 0;
 		funcmap_insert_function(mod->name, name, func_addrs[index], 0);
 /*		if(!strcasecmp(mod->name, "kernel32.dll"))
-			monitor_printf(default_mon, 
+			monitor_printf(default_mon,
 				"i=%d name=%s index=%d func=%08x\n", i, name, index, func_addrs[index]); */
 
 	}
@@ -517,7 +517,7 @@ static void tlb_call_back(DECAF_Callback_Params *temp)
 	}
 
 	if (proc ) {
-		
+
 		if (!is_page_resolved(proc, vaddr)) {
 			get_new_modules(ourenv, proc, vaddr);
 
@@ -529,7 +529,7 @@ static void tlb_call_back(DECAF_Callback_Params *temp)
 
 		}
 		retrieve_missing_symbols(proc, ourenv);
-	
+
 	}
 }
 
