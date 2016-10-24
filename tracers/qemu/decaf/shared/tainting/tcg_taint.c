@@ -164,8 +164,21 @@ static void DUMMY_TAINT(int nb_oargs, int nb_args)
     }
   }
 }
+
+static inline check_mod_addr(TCGArg addr, int label) {
+	/* if(addr < mod_addr) goto label1; */
+	tcg_gen_brcondi_tl(TCG_COND_LTU, addr, mod_addr, label);
+
+	/* if(addr > mod_addr + mod_size) goto label1; */
+	tcg_gen_brcondi_tl(TCG_COND_GTU, addr, mod_addr + mod_size, label);
+}
 static inline mark_tb_head(TCGArg addr, TCGArg size, int cnst)
 {
+	int label = gen_new_label();
+	//tcg_gen_brcondi_tl(TCG_COND_LTU, addr, mod_addr, label);
+	tcg_gen_brcond_tl(TCG_COND_LTU, addr, addr, label);
+	//check_mod_addr(addr, label);
+
 	if (cnst)
 		set_coni_i64(0, addr);
 	else
@@ -175,7 +188,8 @@ static inline mark_tb_head(TCGArg addr, TCGArg size, int cnst)
 	set_coni_i64(2, IS_START);
 	tcg_gen_helperN(add_change, 0, 0,
 								TCG_CALL_DUMMY_ARG, 3, helper_arg_array);
-
+	/* label1: */
+	gen_set_label(label);
 }
 static inline access_register_common_arg(size_t mode, uint8_t w, int size,
 																				TCGArg base, TCGArg offset, TCGv value)
@@ -388,7 +402,7 @@ static inline int gen_kltrace_insn(TCGContext *ctx, TranslationBlock *tb, int se
 		/* Instrument indicator of head address per TB.
 		 	 This operation let kldbg know current address. */
 		if (tb_head) {
-			mark_tb_head(tb->pc, tb->size, 1);
+			//mark_tb_head(tb->pc, tb->size, 1);
 			tb_head = 0;
 		}
 		// /* ### Instrument before operations ### */

@@ -22,6 +22,7 @@
 #include "tcg.h"
 #include "qemu-barrier.h"
 #include "DECAF_main.h"
+#include "tcg_track.h"
 
 int tb_invalidated_flag;
 
@@ -67,6 +68,8 @@ static void cpu_exec_nocache(CPUState *env, int max_cycles,
     tb = tb_gen_code(env, orig_tb->pc, orig_tb->cs_base, orig_tb->flags,
                      max_cycles);
     env->current_tb = tb;
+
+    if (IN_MOD(tb->pc)) add_change(tb->pc, tb->size, IS_START);
     /* execute the generated code */
     next_tb = tcg_qemu_tb_exec(env, tb->tc_ptr);
     env->current_tb = NULL;
@@ -156,7 +159,7 @@ static inline TranslationBlock *tb_find_fast(CPUState *env)
     }
     else if (mod_addr <= tb->pc && tb->pc <mod_addr + mod_size)
       printf("cached:%lx\n", tb->pc);
-      
+
     if (mod_addr <= tb->pc && tb->pc <mod_addr + mod_size) {
       printf("exec:%lx\n", tb->pc);
     }
@@ -582,6 +585,7 @@ int cpu_exec(CPUState *env)
                 barrier();
                 if (likely(!env->exit_request)) {
                     tc_ptr = tb->tc_ptr;
+                    if (IN_MOD(tb->pc)) add_change(tb->pc, tb->size, IS_START);                    
                 /* execute the generated code */
                     next_tb = tcg_qemu_tb_exec(env, tc_ptr);
                     if ((next_tb & 3) == 2) {

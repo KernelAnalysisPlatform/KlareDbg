@@ -666,7 +666,68 @@ static inline void access_reg(TCGContext *s, TCGType type,
 
   return;
 }
+static void tcg_out_cmp(TCGContext *s, TCGArg arg1, TCGArg arg2, int const_arg2, int rexw);
+static inline void check_mod_addr(TCGContext *s, TCGType type, TCGReg addr, uint8_t **label_ptr) {
+  int rexw = 0;
+  if (type == TCG_TYPE_I64) {
+    rexw = P_REXW;
+  }
+  /* cmp addr, mod_addr */
+  tcg_out_cmp(s, addr, mod_addr, 1, rexw);
+  /* jb label2 */
+  tcg_out8(s, OPC_JCC_short + JCC_JB);
+  label_ptr[0] = s->code_ptr;
+  s->code_ptr++;
 
+  /* cmp addr, mod_addr + mod_size */
+  tcg_out_cmp(s, addr, mod_addr + mod_size, 1, rexw);
+  /* ja label2 */
+  tcg_out8(s, OPC_JCC_short + JCC_JA);
+  label_ptr[1] = s->code_ptr;
+  s->code_ptr++;
+}
+
+static inline void mark_pc(TCGContext *s, TCGType type,
+                          TCGReg addr) {
+  uint8_t *label_ptr[3];
+  tcg_out_push(s, tcg_target_call_iarg_regs[0]);
+  tcg_out_push(s, tcg_target_call_iarg_regs[1]);
+  tcg_out_push(s, tcg_target_call_iarg_regs[2]);
+  tcg_out_push(s, TCG_REG_R10);
+
+  check_mod_addr(s, type, addr, label_ptr);
+  /* In module address */
+  tcg_out_mov(s, type,
+              tcg_target_call_iarg_regs[0], addr);
+  if (type == TCG_TYPE_I32) {
+    tcg_out_movi(s, type,
+                tcg_target_call_iarg_regs[1], 32);
+  }
+  else if (type == TCG_TYPE_I64) {
+    tcg_out_movi(s, type,
+                tcg_target_call_iarg_regs[1], 64);
+  }
+  tcg_out_movi(s, type,
+              tcg_target_call_iarg_regs[2], IS_START);
+
+  tcg_out_calli(s, add_change);
+
+  /* jmp label2 */
+  tcg_out8(s, OPC_JMP_short);
+  label_ptr[2] = s->code_ptr;
+  s->code_ptr++;
+
+  /* Out of module address(FIN) */
+  /* label2: */
+  *label_ptr[2] = s->code_ptr - label_ptr[2] - 1;
+  *label_ptr[0] = s->code_ptr - label_ptr[0] - 1;
+  *label_ptr[1] = s->code_ptr - label_ptr[1] - 1;
+
+  tcg_out_pop(s, TCG_REG_R10);
+  tcg_out_pop(s, tcg_target_call_iarg_regs[2]);
+  tcg_out_pop(s, tcg_target_call_iarg_regs[1]);
+  tcg_out_pop(s, tcg_target_call_iarg_regs[0]);
+}
 static inline void write_reg(TCGContext *s, TCGType type, TCGReg arg, TCGReg arg1, tcg_target_long arg2) {
   access_reg(s, type, arg, arg1, arg2, 1);
 }
@@ -679,11 +740,15 @@ static inline void tcg_out_st(TCGContext *s, TCGType type, TCGReg arg,
 {
     int opc = OPC_MOVL_EvGv + (type == TCG_TYPE_I64 ? P_REXW : 0);
     tcg_out_modrm_offset(s, opc, arg, arg1, arg2);
-    // tcg_out_push(s, TCG_REG_R10);
-    // tcg_out_calli(s, (target_ulong)test);
-    // tcg_out_pop(s, TCG_REG_R10);
-    if (mod_addr <= cpu_single_env->eip && cpu_single_env->eip < mod_addr + mod_size)
-      write_reg(s, type, arg, arg1, arg2);
+    if (mod_addr <= cpu_single_env->eip && cpu_single_env->eip < mod_addr + mod_size) {
+      if (arg2 == 0x80) {
+        printf("mark_pc 0x%lx\n", cpu_single_env->eip);
+        mark_pc(s, type, arg);
+      }
+      else {
+        write_reg(s, type, arg, arg1, arg2);
+      }
+    }
 }
 
 static void tcg_out_shifti(TCGContext *s, int subopc, int reg, int count)
