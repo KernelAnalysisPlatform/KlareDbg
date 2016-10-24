@@ -266,11 +266,10 @@ class CsInsn(object):
     self.md.detail = True
     try:
       self.i = self.md.disasm(self.raw, self.address).next()
-      self.decoded = True
       self.regs_read = self.i.regs_read
       self.regs_write = self.i.regs_write
-      print hex(self.address), ":", self.i.mnemonic, self.i.op_str
-      self.dtype = DESTTYPE.none
+      self.decoded = True
+
       if arch == 'i386' or arch == 'x86-64':
           if self.i.mnemonic == "call":
             self.dtype = DESTTYPE.call
@@ -305,7 +304,12 @@ class CsInsn(object):
 
     #if capstone can't decode it, we're screwed
     except StopIteration:
+      # XXX: assign nop operation temporary
+      self.i = self.md.disasm(b"\x90", self.address).next()
       self.decoded = False
+
+    print hex(self.address), ":", self.i.mnemonic, self.i.op_str
+    self.dtype = DESTTYPE.none
 
   def __repr__(self):
     return self.__str__()

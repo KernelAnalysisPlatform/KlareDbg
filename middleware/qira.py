@@ -57,7 +57,7 @@ if __name__ == '__main__':
   qira_config.FORK_PORT = args.socat_port + 1
 
   print "*** using static"
-  qira_config.WITH_STATIC = False
+  qira_config.WITH_STATIC = True
   qira_config.STATIC_ENGINE = "kap"
 
   if args.flush_cache:
@@ -74,14 +74,14 @@ if __name__ == '__main__':
   program = qira_program.Program(args.image, args.binary, args.args, qemu_args)
 
   is_qira_running = 1
-  try:
-    socket.create_connection(('127.0.0.1', qira_config.WEB_PORT))
-    if args.server:
-      raise Exception("can't run as server if QIRA is already running")
-  except:
-    is_qira_running = 0
-    print "no qira server found, starting it"
-    program.clear()
+  # try:
+  #   socket.create_connection(('127.0.0.1', qira_config.WEB_PORT))
+  #   if args.server:
+  #     raise Exception("can't run as server if QIRA is already running")
+  # except:
+  is_qira_running = 0
+  print "no qira server found, starting it"
+  program.clear()
 
   # start the image runner
   if args.server:

@@ -81,7 +81,7 @@ def graph_dot():
   os.system("dot /tmp/in.dot > /tmp/out.dot")
   ret = open("/tmp/out.dot").read()
   #print "DOT RESPONSE", ret
-  return ret 
+  return ret
 
 # currently if we aren't using static, we don't want to draw the staticview
 # or be able to makefunction
@@ -95,7 +95,7 @@ if qira_config.WITH_STATIC:
       bbb['comment'] = stat['comment']
       if 'instruction' in stat:
         bbb['instruction'] = str(stat['instruction'])
-
+    print "getstaticview", haddr, flat, flatrange
     fxn = program.static[fhex(haddr)]['function']
     if fxn == None or flat == True:
       addr = fhex(haddr)
@@ -106,6 +106,7 @@ if qira_config.WITH_STATIC:
       i = addr
       while len(ret) != abs(flatrange[0]):
         did_append = False
+        print 'trying...', hex(i)
         # search up to 256 back
         for j in range(1, 256):
           if 'len' in program.static[i-j] and program.static[i-j]['len'] == j:
@@ -114,6 +115,7 @@ if qira_config.WITH_STATIC:
             bbb['bytes'] = map(ord, program.static.memory(i, j))
             ret.append(bbb)
             did_append = True
+            print 'appended:', ghex(i), j, bbb['bytes']
             break
         if not did_append:
           i -= 1
@@ -124,36 +126,38 @@ if qira_config.WITH_STATIC:
 
       # find forward
       i = addr
-      while len(ret) != abs(flatrange[0]) + flatrange[1]:
-        bbb = {'address': ghex(i)}
-        #print program.tags[i]
-        if 'len' in program.static[i]:
-          l = program.static[i]['len']
-          if l == 0:
-            l = 1
-        else:
-          l = 1
-        bbb['bytes'] = map(ord, program.static.memory(i, l))
-        i += l
-        ret.append(bbb)
+    #   while len(ret) != abs(flatrange[0]) + flatrange[1]:
+    #     bbb = {'address': ghex(i)}
+    #     #print program.tags[i]
+    #     if 'len' in program.static[i]:
+    #       l = program.static[i]['len']
+    #       if l == 0:
+    #         l = 1
+    #     else:
+    #       l = 1
+    #     bbb['bytes'] = map(ord, program.static.memory(i, l))
+    #     i += l
+    #     ret.append(bbb)
 
       for bbb in ret:
         a = fhex(bbb['address'])
         copy_fields(bbb, program.static[a])
         # dests?
-
+      print 'emit: ', ret
       emit('flat', ret)
     else:
       blocks = []
+      print fxn.blocks
       for b in fxn.blocks:
         bb = []
+        print sorted(b.addresses)
         for i in sorted(b.addresses):
           bbb = {'address': ghex(i)}
           copy_fields(bbb, program.static[i])
           bbb['dests'] = map(lambda (x,y): (ghex(x), y), program.static[i]['instruction'].dests())
           bb.append(bbb)
         blocks.append(bb)
-
+      print blocks
       emit('function', {'blocks': blocks})
 
   @socketio.on('make', namespace='/qira')
@@ -194,5 +198,3 @@ if qira_config.WITH_STATIC:
       del program.static[iaddr]['len']
       del program.static[iaddr]['type']
       del program.static[iaddr]['instruction']
-
-

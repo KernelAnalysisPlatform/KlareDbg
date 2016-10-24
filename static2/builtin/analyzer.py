@@ -4,18 +4,30 @@ import byteweight
 import time
 
 def analyze_functions(static):
-  make_function_at(static, static['entry'])
-  main = static.get_address_by_name("main")
-  if main != None:
-    make_function_at(static, main)
-  bw_functions = byteweight.fsi(static)
-  for f in bw_functions:
-    make_function_at(static, f)
+  #make_function_at(static, static.load_address)
+  # main = static.get_address_by_name("init_module")
+  # if main != None:
+  #   make_function_at(static, static.get_address_by_name("init_module"))
+  symbols = static.get_symbols()
+  print symbols
+  analyzed = False
+  for sym in symbols:
+      print '##SYM##: ', sym
+      make_function_at(static, static.get_address_by_name(sym))
+  analyzed = True
+  return analyzed
+  # print "###################################"
+  # bw_functions = byteweight.fsi(static)
+  # print 'byteweight:', bw_functions
+  # print "###################################"
+  # for f in bw_functions:
+  #   make_function_at(static, f)
 
 # things to actually drive the static analyzer
 # runs the recursive descent parser at address
 # how to deal with block groupings?
 def make_function_at(static, address, recurse = True):
+  print "make_function_at", hex(address)
   if static[address]['function'] != None:
     # already function
     return
@@ -67,7 +79,7 @@ def make_function_at(static, address, recurse = True):
       time.sleep(0.01)
       start = time.time()
 
-  #print map(hex, done)
+  print map(hex, done)
 
   # block finding pass
   for b in block_starts:
@@ -92,3 +104,4 @@ def make_function_at(static, address, recurse = True):
     for f in function_starts:
       if static[f]['function'] == None:
         make_function_at(static, f)
+  print "## SYM END ##"

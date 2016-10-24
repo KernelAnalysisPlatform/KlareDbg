@@ -56,6 +56,10 @@ class Program:
     # this is always initted, as it's the tag repo
     self.static = static2.Static(self.binary)
 
+    # init static
+    if qira_config.WITH_STATIC:
+      threading.Thread(target=self.static.process).start()
+      
     # no traces yet
     self.traces = {}
     self.runnable = False

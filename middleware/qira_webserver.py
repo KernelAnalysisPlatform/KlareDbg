@@ -267,7 +267,7 @@ def getinstructions(forknum, clnum, clstart, clend):
     instr = program.static[rret['address']]['instruction']
     rret['instruction'] = instr.__str__() #i == clnum
     if rret['instruction'] == "":
-      rret['instruction'] = "lib_func"
+      rret['instruction'] = "nop"
 
     print '0x%lx %s\n' % (rret['address'], rret['instruction'])
     # check if static fails at this

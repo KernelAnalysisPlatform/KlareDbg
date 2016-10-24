@@ -73,8 +73,8 @@ class Static:
     self.base_memory = {}
 
     # kernel module loaded address
-    self.load_address = 0xffffffffc0084000
-
+    self.load_address = 0xffffffffc0085000
+    self.debug = 0
     #pass static engine as an argument for testing
     if static_engine is None:
       static_engine = qira_config.STATIC_ENGINE
@@ -186,6 +186,9 @@ class Static:
     else:
       return None
 
+  def get_symbols(self):
+      return self.rnames.keys()
+
   def _insert_names(self,st):
     '''TODO kind of fugly
        takes in a string and replaces things like 0x???????? with
@@ -269,9 +272,10 @@ class Static:
     print 'add chunk(0x%lx, 0x%lx)' % (address, address + len(dat))
 
   def process(self):
-    self.analyzer.analyze_functions(self)
-    if self.debug >= 1:
-      print "*** found %d functions" % len(self['functions'])
+    while self.analyzer.analyze_functions(self) == False:
+      if self.debug >= 1:
+        print "*** found %d functions" % len(self['functions'])
+      time.sleep(0.1)
 
 
 # *** STATIC TEST STUFF ***
