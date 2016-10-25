@@ -1047,7 +1047,7 @@ void helper_DECAF_invoke_keystroke_callback(int keycode,uint32_t *taint_mark)
 
 }
 
-void helper_DECAF_invoke_mem_read_callback(gva_t virt_addr,gpa_t phy_addr, unsigned long value, DATA_TYPE data_type)
+void helper_DECAF_invoke_mem_read_callback(gva_t virt_addr,gpa_t phy_addr, target_ulong value, DATA_TYPE data_type)
 {
 
 //   static callback_struct_t *cb_struct, *cb_temp;
@@ -1070,12 +1070,12 @@ void helper_DECAF_invoke_mem_read_callback(gva_t virt_addr,gpa_t phy_addr, unsig
 //   }
 // POP_ALL()
 	if (IN_MOD(cpu_single_env->eip)) {
-		printf("[load] virt_addr:%lx, value:%lu\n", virt_addr, value);
+		printf("[mem_load] virt_addr:%lx, value:%lx\n", virt_addr, value);
 		track_load(virt_addr, value, data_type);
 	}
 }
 
-void helper_DECAF_invoke_mem_write_callback(gva_t virt_addr,gpa_t phy_addr,unsigned long value, DATA_TYPE data_type)
+void helper_DECAF_invoke_mem_write_callback(gva_t virt_addr,gpa_t phy_addr,target_ulong value, DATA_TYPE data_type)
 {
 
 // 	static callback_struct_t *cb_struct, *cb_temp;
@@ -1098,7 +1098,7 @@ void helper_DECAF_invoke_mem_write_callback(gva_t virt_addr,gpa_t phy_addr,unsig
 // 	}
 //   POP_ALL()
 	if (IN_MOD(cpu_single_env->eip)) {
-		printf("[store] virt_addr:%lx, value:%lu\n", virt_addr, value);
+		printf("[mem_store] virt_addr:%lx, value:%lx\n", virt_addr, value);
 		track_store(virt_addr, value, data_type);
 	}
 }

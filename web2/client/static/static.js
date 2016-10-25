@@ -8,7 +8,7 @@ Deps.autorun(function() { DA("update static view");
   if (iview === undefined) return;
 
   var size = get_size("#flat-static");
-  p(size);
+  p('flat-static:' + size);
 
   stream.emit('getstaticview', iview, flat, [-5,size-5]);
 });
@@ -66,7 +66,7 @@ function on_flat(addrs) { DS("flat");
 
 function on_function(fxn) { DS("function");
   var graph = new Graph();
-  p(fxn);
+  p("on_function" + fxn);
 
   for (var bn = 0; bn < fxn.blocks.length; bn++) {
     var bb = fxn.blocks[bn];
@@ -82,19 +82,20 @@ function on_function(fxn) { DS("function");
 
     dom.html(idump);
     graph.addVertex(addr, cnt, dom[0]);
-
+    p("edge:" + String(addr) + "," + String(cnt));
     // add edges
-    for (var i = 0; i < bb[cnt-1].dests.length; i++) {
-      var dd = bb[cnt-1].dests[i];
+    for (var i = 0; i < bb[cnt-2].dests.length; i++) {
+      var dd = bb[cnt-2].dests[i];
       if (dd[1] == 3) continue;
 
       var col = "blue";  // base off dd[1]
-      if (bb[cnt-1].dests.length > 1 && dd[1] == 4) {
+      if (bb[cnt-2].dests.length > 1 && dd[1] == 4) {
         col = "red";
       } else if (dd[1] == 1) {
         col = "green";
       }
       graph.addEdge(addr, dd[0], col);
+      p(String(addr)+"->"+String(dd[0]));
     }
 
   }
@@ -105,4 +106,3 @@ function on_function(fxn) { DS("function");
   rehighlight();
   replace_names();
 } stream.on('function', on_function);
-

@@ -73,7 +73,7 @@ class Static:
     self.base_memory = {}
 
     # kernel module loaded address
-    self.load_address = 0xffffffffc0085000
+    self.load_address = 0xffffffffc0082000
     self.debug = 0
     #pass static engine as an argument for testing
     if static_engine is None:

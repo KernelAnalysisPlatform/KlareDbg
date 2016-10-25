@@ -175,8 +175,6 @@ static inline check_mod_addr(TCGArg addr, int label) {
 static inline mark_tb_head(TCGArg addr, TCGArg size, int cnst)
 {
 	int label = gen_new_label();
-	//tcg_gen_brcondi_tl(TCG_COND_LTU, addr, mod_addr, label);
-	tcg_gen_brcond_tl(TCG_COND_LTU, addr, addr, label);
 	//check_mod_addr(addr, label);
 
 	if (cnst)
@@ -189,7 +187,7 @@ static inline mark_tb_head(TCGArg addr, TCGArg size, int cnst)
 	tcg_gen_helperN(add_change, 0, 0,
 								TCG_CALL_DUMMY_ARG, 3, helper_arg_array);
 	/* label1: */
-	gen_set_label(label);
+	//gen_set_label(label);
 }
 static inline access_register_common_arg(size_t mode, uint8_t w, int size,
 																				TCGArg base, TCGArg offset, TCGv value)
@@ -199,7 +197,7 @@ static inline access_register_common_arg(size_t mode, uint8_t w, int size,
 			/* FIXME: */
 			if (offset == 0x80 && w == 1) {
 				/* Jump to next instruction */
-					mark_tb_head(value, size, 0);
+					//mark_tb_head(value, size, 0);
 			}
 			// else {
 			// 	if (mode == 32) {
@@ -402,7 +400,7 @@ static inline int gen_kltrace_insn(TCGContext *ctx, TranslationBlock *tb, int se
 		/* Instrument indicator of head address per TB.
 		 	 This operation let kldbg know current address. */
 		if (tb_head) {
-			//mark_tb_head(tb->pc, tb->size, 1);
+			mark_tb_head(tb->pc, tb->size, 1);
 			tb_head = 0;
 		}
 		// /* ### Instrument before operations ### */
@@ -451,46 +449,46 @@ static inline int gen_kltrace_insn(TCGContext *ctx, TranslationBlock *tb, int se
 
 		/* ### Instrument after operations ### */
     gen_old_opc_ptr = gen_opc_ptr;
-		switch (opc) {
-			/* QEMU-specific operations. */
-			case INDEX_op_ld8u_i32:
-      case INDEX_op_ld8s_i32:
-				read_register_32(8);
-      case INDEX_op_ld16u_i32:
-      case INDEX_op_ld16s_i32:
-				read_register_32(16);
-      case INDEX_op_ld_i32:
-				read_register_32(32);
-				break;
-      case INDEX_op_ld8u_i64:
-      case INDEX_op_ld8s_i64:
-				read_register_64(8);
-      case INDEX_op_ld16u_i64:
-      case INDEX_op_ld16s_i64:
-				read_register_64(16);
-      case INDEX_op_ld32u_i64:
-      case INDEX_op_ld32s_i64:
-				read_register_64(32);
-      case INDEX_op_ld_i64:
-				read_register_64(64);
-				break;
-      case INDEX_op_st8_i32:
-				write_register_32(8);
-      case INDEX_op_st16_i32:
-				write_register_32(16);
-      case INDEX_op_st_i32:
-				write_register_32(32);
-				break;
-      case INDEX_op_st8_i64:
-				write_register_64(8);
-      case INDEX_op_st16_i64:
-				write_register_64(16);
-      case INDEX_op_st32_i64:
-				write_register_64(32);
-      case INDEX_op_st_i64:
-				write_register_64(64);
-				break;
-		}
+		// switch (opc) {
+		// 	/* QEMU-specific operations. */
+		// 	case INDEX_op_ld8u_i32:
+    //   case INDEX_op_ld8s_i32:
+		// 		read_register_32(8);
+    //   case INDEX_op_ld16u_i32:
+    //   case INDEX_op_ld16s_i32:
+		// 		read_register_32(16);
+    //   case INDEX_op_ld_i32:
+		// 		read_register_32(32);
+		// 		break;
+    //   case INDEX_op_ld8u_i64:
+    //   case INDEX_op_ld8s_i64:
+		// 		read_register_64(8);
+    //   case INDEX_op_ld16u_i64:
+    //   case INDEX_op_ld16s_i64:
+		// 		read_register_64(16);
+    //   case INDEX_op_ld32u_i64:
+    //   case INDEX_op_ld32s_i64:
+		// 		read_register_64(32);
+    //   case INDEX_op_ld_i64:
+		// 		read_register_64(64);
+		// 		break;
+    //   case INDEX_op_st8_i32:
+		// 		write_register_32(8);
+    //   case INDEX_op_st16_i32:
+		// 		write_register_32(16);
+    //   case INDEX_op_st_i32:
+		// 		write_register_32(32);
+		// 		break;
+    //   case INDEX_op_st8_i64:
+		// 		write_register_64(8);
+    //   case INDEX_op_st16_i64:
+		// 		write_register_64(16);
+    //   case INDEX_op_st32_i64:
+		// 		write_register_64(32);
+    //   case INDEX_op_st_i64:
+		// 		write_register_64(64);
+		// 		break;
+		// }
 	}
 	free(args);
 	return return_lj;

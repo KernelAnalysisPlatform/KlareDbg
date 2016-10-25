@@ -8215,7 +8215,7 @@ static inline void gen_intermediate_code_internal(CPUState *env,
 #endif /* CONFIG_TCG_IR_LOG */
                     /* KLDBG: */
                     if (mod_addr <= tb->pc && tb->pc < mod_addr + mod_size)
-                      ;//lj = kltrace(&tcg_ctx, tb, search_pc);
+                      lj = kltrace(&tcg_ctx, tb, search_pc);
 #ifdef CONFIG_TCG_TAINT
                     if (taint_tracking_enabled)
                         lj = optimize_taint(search_pc);
@@ -8259,7 +8259,7 @@ static inline void gen_intermediate_code_internal(CPUState *env,
 #endif /* CONFIG_TCG_IR_LOG */
             /* KLDBG: */
           if (mod_addr <= tb->pc && tb->pc < mod_addr + mod_size)
-            ;//lj = kltrace(&tcg_ctx, tb, search_pc);
+            lj = kltrace(&tcg_ctx, tb, search_pc);
 #ifdef CONFIG_TCG_TAINT
             if (taint_tracking_enabled)
                 lj = optimize_taint(search_pc);
@@ -8275,7 +8275,7 @@ static inline void gen_intermediate_code_internal(CPUState *env,
             (flags & HF_INHIBIT_IRQ_MASK)) {
             /* KLDBG: */
           if (mod_addr <= tb->pc && tb->pc < mod_addr + mod_size)
-            ;//lj = kltrace(&tcg_ctx, tb, search_pc);
+            lj = kltrace(&tcg_ctx, tb, search_pc);
           gen_jmp_im(pc_ptr - dc->cs_base);
           gen_eob(dc);
           break;
@@ -8296,7 +8296,7 @@ static inline void gen_intermediate_code_internal(CPUState *env,
 #endif /* CONFIG_TCG_IR_LOG */
             /* KLDBG: */
             if (mod_addr <= tb->pc && tb->pc < mod_addr + mod_size)
-              ;//lj = kltrace(&tcg_ctx, tb, search_pc);
+              lj = kltrace(&tcg_ctx, tb, search_pc);
 #ifdef CONFIG_TCG_TAINT
             if (taint_tracking_enabled)
                 lj = optimize_taint(search_pc);
@@ -8308,7 +8308,7 @@ static inline void gen_intermediate_code_internal(CPUState *env,
         if (singlestep) {
             /* KLDBG: */
           if (mod_addr <= tb->pc && tb->pc < mod_addr + mod_size)
-            ;//lj = kltrace(&tcg_ctx, tb, search_pc);
+            lj = kltrace(&tcg_ctx, tb, search_pc);
           gen_jmp_im(pc_ptr - dc->cs_base);
           gen_eob(dc);
           break;

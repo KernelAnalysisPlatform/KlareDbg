@@ -4,7 +4,7 @@
 }
 
 .wcPanelBackground {
-  background-color: #aaa;
+  background-color: #373737
 }
 
 .wcPanelBackground .wcCenter {
@@ -27,7 +27,7 @@
 
 .wcFrameTitle {
   font-size: 12px;
-  font-family: monospace;  
+  font-family: monospace;
   text-align: center;
   color: #aaa;
   margin-top: 3px;
@@ -82,8 +82,8 @@
 }
 
 .wcSplitterBar {
-  border: 1px solid black;
-  background-color: black;
+  border: 1px solid white;
+  background-color: white;
 }
 
 .wcSplitterBarStatic {

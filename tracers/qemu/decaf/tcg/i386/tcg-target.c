@@ -741,13 +741,12 @@ static inline void tcg_out_st(TCGContext *s, TCGType type, TCGReg arg,
     int opc = OPC_MOVL_EvGv + (type == TCG_TYPE_I64 ? P_REXW : 0);
     tcg_out_modrm_offset(s, opc, arg, arg1, arg2);
     if (mod_addr <= cpu_single_env->eip && cpu_single_env->eip < mod_addr + mod_size) {
+      write_reg(s, type, arg, arg1, arg2);      
       if (arg2 == 0x80) {
         printf("mark_pc 0x%lx\n", cpu_single_env->eip);
         mark_pc(s, type, arg);
       }
-      else {
-        write_reg(s, type, arg, arg1, arg2);
-      }
+
     }
 }
 
@@ -1136,9 +1135,6 @@ static inline void tcg_out_ld(TCGContext *s, TCGType type, TCGReg ret,
 {
     int opc = OPC_MOVL_GvEv + (type == TCG_TYPE_I64 ? P_REXW : 0);
     tcg_out_modrm_offset(s, opc, ret, arg1, arg2);
-    // tcg_out_push(s, TCG_REG_R10);
-    // tcg_out_calli(s, (target_ulong)test);
-    // tcg_out_pop(s, TCG_REG_R10);
     if (mod_addr <= cpu_single_env->eip && cpu_single_env->eip < mod_addr + mod_size)
       read_reg(s, type, ret, arg1, arg2);
 }

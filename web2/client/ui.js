@@ -9,7 +9,8 @@ $(document).ready(function() {
   var req = new XMLHttpRequest();
   req.open('GET', '/hasstatic', false);
   req.send()
-  var has_static = req.response == "True";
+  //var has_static = req.response == "True";
+  var has_static = true;
 
   var cfgDef = $.Deferred();
   var memoryDef = $.Deferred();
@@ -85,17 +86,18 @@ $(document).ready(function() {
   var controlPanel = myDocker.addPanel("Control", wcDocker.DOCK.TOP, null);
 
   controlPanel.maxSize(1000, 70);
-  if (has_static) {
-    var cfgPanel = myDocker.addPanel("Control Flow", wcDocker.DOCK.RIGHT, controlPanel);
-    var flatPanel = myDocker.addPanel("Flat", wcDocker.DOCK.BOTTOM, cfgPanel, {h: 200});
-  }
 
   var idumpPanel = myDocker.addPanel("idump", wcDocker.DOCK.BOTTOM, controlPanel, {h: 700, w:900});
   var dynamicPanel = myDocker.addPanel("Dynamic", wcDocker.DOCK.RIGHT, idumpPanel, {h: 700, w:400});
   //dynamicPanel.maxSize(0, 82);
 
-  var memoryPanel = myDocker.addPanel("Memory", wcDocker.DOCK.BOTTOM, idumpPanel, {h: 340});
-  var stracePanel = myDocker.addPanel("strace", wcDocker.DOCK.BOTTOM, dynamicPanel, {h: 250});
+  if (has_static) {
+    var cfgPanel = myDocker.addPanel("Control Flow", wcDocker.DOCK.BOTTOM, idumpPanel, {h: 340});
+    //var flatPanel = myDocker.addPanel("Flat", wcDocker.DOCK.BOTTOM, dynamicPanel, {h: 250});
+  }
+
+  var memoryPanel = myDocker.addPanel("Memory", wcDocker.DOCK.BOTTOM, dynamicPanel, {h: 100});
+  var stracePanel = myDocker.addPanel("strace", wcDocker.DOCK.BOTTOM, dynamicPanel, {h: 0});
 
 
 
@@ -121,8 +123,8 @@ $(document).ready(function() {
   }
 
   if (has_static) {
-    $.when(idumpDef, memoryDef, straceDef, controlDef, dynamicDef, cfgDef, flatDef).done(is_done);
+    $.when(memoryDef, straceDef, idumpDef, controlDef, dynamicDef, cfgDef).done(is_done);
   } else {
-    $.when(idumpDef, memoryDef, straceDef, controlDef, dynamicDef).done(is_done);
+    $.when(idumpDef, controlDef, dynamicDef).done(is_done);
   }
 });
