@@ -59,12 +59,12 @@ class Program:
     # init static
     if qira_config.WITH_STATIC:
       threading.Thread(target=self.static.process).start()
-      
+
     # no traces yet
     self.traces = {}
     self.runnable = False
 
-    self.memory = 2048
+    self.memory = 1500
     # bring this back
     if self.image != "/tmp/qira_image":
       try:
@@ -257,7 +257,7 @@ class Trace:
     self.forknum = forknum
     self.image = program
     self.db = qiradb.Trace(fn, forknum, r1, r2, r3)
-    #self.load_base_memory()
+    self.load_base_memory()
 
     # analysis stuff
     self.maxclnum = None

@@ -86,7 +86,7 @@ def graph_dot():
 # currently if we aren't using static, we don't want to draw the staticview
 # or be able to makefunction
 
-if qira_config.WITH_STATIC:
+if qira_config.WITH_GRAPH:
   @socketio.on('getstaticview', namespace='/qira')
   @socket_method
   def getstaticview(haddr, flat, flatrange):

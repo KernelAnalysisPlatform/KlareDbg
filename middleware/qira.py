@@ -27,7 +27,8 @@ if __name__ == '__main__':
   parser.add_argument("--host", metavar="HOST", help="listen address for web interface and socat. "+qira_config.HOST+" by default", default=qira_config.HOST)
   parser.add_argument("--web-port", metavar="PORT", help="listen port for web interface. 3002 by default", type=int, default=qira_config.WEB_PORT)
   parser.add_argument("--socat-port", metavar="PORT", help="listen port for socat. 4000 by default", type=int, default=qira_config.SOCAT_PORT)
-  #parser.add_argument('-S', '--static', help="enable static2", action="store_true")
+  parser.add_argument('-g', '--graphview', help="enable graphview", action="store_true")
+  # parser.add_argument('-S', '--static', help="enable static2", action="store_true")
   #parser.add_argument("--engine", help="static engine to use with static2 (builtin or r2)", default="builtin")
   #capstone flag in qira_config for now
 
@@ -55,6 +56,10 @@ if __name__ == '__main__':
   qira_config.WEB_PORT = args.web_port
   qira_config.SOCAT_PORT = args.socat_port
   qira_config.FORK_PORT = args.socat_port + 1
+
+  if args.graphview:
+    print "*** enable graph view"
+    qira_config.WITH_GRAPH = True
 
   print "*** using static"
   qira_config.WITH_STATIC = True
