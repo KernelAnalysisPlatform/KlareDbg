@@ -14,6 +14,6 @@ else
   echo "WARNING: you don't have apt-get, you are required to fetch the build deps of QEMU on your own"
 fi
 
-cd qemu/qemu-latest
+cd qemu/decaf
 ./configure --target-list=x86_64-softmmu
 make -j $(grep processor < /proc/cpuinfo | wc -l)

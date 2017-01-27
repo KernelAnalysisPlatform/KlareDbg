@@ -23,6 +23,8 @@ if [[ "$unamestr" == 'Linux' ]]; then
     sudo apt-get -qq -y install build-essential debootstrap debian-archive-keyring libjpeg-dev zlib1g-dev unzip wget graphviz curl
     echo "install python packages"
     sudo apt-get -qq -y install python-dev python-pip python-virtualenv
+    echo "install decaf requires"
+    sudo apt-get -qq -y install libboost-dev
 
     # install capstone
     if [ "$arch" == 'i686' ]; then
